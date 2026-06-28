@@ -38,6 +38,8 @@ struct OutputEntry {
     pos_x: Option<i32>,
     pos_y: Option<i32>,
     scale: i32,
+    mode_width: Option<i32>,
+    mode_height: Option<i32>,
 }
 
 struct State {
@@ -47,6 +49,8 @@ struct State {
     outputs: Vec<OutputEntry>,
     surface: Option<SurfaceEntry>,
     configured: bool,
+    configured_w: Option<u32>,
+    configured_h: Option<u32>,
 }
 
 struct SurfaceEntry {
@@ -96,6 +100,8 @@ impl Dispatch<WlRegistry, ()> for State {
                         pos_x: None,
                         pos_y: None,
                         scale: 1,
+                        mode_width: None,
+                        mode_height: None,
                     });
                 }
                 _ => {}
@@ -125,6 +131,16 @@ impl Dispatch<WlOutput, OutputKey> for State {
                 wayland_client::protocol::wl_output::Event::Name { name } => {
                     entry.name = Some(name);
                 }
+                wayland_client::protocol::wl_output::Event::Mode { flags, width, height, .. } => {
+                    let is_current = match flags {
+                        wayland_client::WEnum::Value(f) => f.contains(wayland_client::protocol::wl_output::Mode::Current),
+                        wayland_client::WEnum::Unknown(_) => false,
+                    };
+                    if is_current {
+                        entry.mode_width = Some(width);
+                        entry.mode_height = Some(height);
+                    }
+                }
                 _ => {}
             }
         }
@@ -143,10 +159,13 @@ impl Dispatch<ZwlrLayerSurfaceV1, SurfaceKey> for State {
         match event {
             wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_surface_v1::Event::Configure {
                 serial,
-                ..
+                width,
+                height,
             } => {
                 surface.ack_configure(serial);
                 state.configured = true;
+                state.configured_w = Some(width);
+                state.configured_h = Some(height);
             }
             wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_surface_v1::Event::Closed => {
                 state.configured = false;
@@ -178,23 +197,69 @@ impl Dispatch<ZwlrLayerShellV1, ()> for State {
     fn event(_: &mut Self, _: &ZwlrLayerShellV1, _: wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_shell_v1::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
 }
 
-fn draw_border(mmap: &mut [u8], width: i32, height: i32, thick: i32, alpha: u8) {
+fn draw_selection_border(
+    mmap: &mut [u8],
+    width: i32, // full screen buffer width
+    height: i32, // full screen buffer height
+    rx: i32, // selection logical x relative to output
+    ry: i32, // selection logical y relative to output
+    rw: i32, // selection logical width
+    rh: i32, // selection logical height
+    scale: i32,
+    alpha: u8,
+) {
     mmap.fill(0);
-    // Wayland format is Argb8888 (little-endian BGRA)
-    // Blue=0, Green=0, Red=alpha, Alpha=alpha
     let color = [0u8, 0u8, alpha, alpha];
     
-    for y in 0..height {
-        for x in 0..width {
-            let is_border = x < thick || x >= width - thick || y < thick || y >= height - thick;
-            if is_border {
-                let offset = ((y * width + x) * 4) as usize;
-                if offset + 3 < mmap.len() {
-                    mmap[offset] = color[0];
-                    mmap[offset + 1] = color[1];
-                    mmap[offset + 2] = color[2];
-                    mmap[offset + 3] = color[3];
-                }
+    let thick = BORDER_THICK * scale;
+    let padding = PADDING * scale;
+    
+    // Physical coordinates with padding
+    let border_l = (rx * scale - padding).max(0);
+    let border_r = ((rx + rw) * scale + padding).min(width);
+    let border_t = (ry * scale - padding).max(0);
+    let border_b = ((ry + rh) * scale + padding).min(height);
+    
+    if border_l >= border_r || border_t >= border_b {
+        return;
+    }
+
+    // Draw top line
+    for y in border_t..std::cmp::min(border_t + thick, border_b) {
+        for x in border_l..border_r {
+            let offset = ((y * width + x) * 4) as usize;
+            if offset + 3 < mmap.len() {
+                mmap[offset..offset+4].copy_from_slice(&color);
+            }
+        }
+    }
+
+    // Draw bottom line
+    for y in std::cmp::max(border_t, border_b - thick)..border_b {
+        for x in border_l..border_r {
+            let offset = ((y * width + x) * 4) as usize;
+            if offset + 3 < mmap.len() {
+                mmap[offset..offset+4].copy_from_slice(&color);
+            }
+        }
+    }
+
+    // Draw left line
+    for y in border_t..border_b {
+        for x in border_l..std::cmp::min(border_l + thick, border_r) {
+            let offset = ((y * width + x) * 4) as usize;
+            if offset + 3 < mmap.len() {
+                mmap[offset..offset+4].copy_from_slice(&color);
+            }
+        }
+    }
+
+    // Draw right line
+    for y in border_t..border_b {
+        for x in std::cmp::max(border_l, border_r - thick)..border_r {
+            let offset = ((y * width + x) * 4) as usize;
+            if offset + 3 < mmap.len() {
+                mmap[offset..offset+4].copy_from_slice(&color);
             }
         }
     }
@@ -223,6 +288,8 @@ pub fn run_overlay(
         outputs: Vec::new(),
         surface: None,
         configured: false,
+        configured_w: None,
+        configured_h: None,
     };
 
     event_queue.roundtrip(&mut state).context("Failed to initialize Wayland globals")?;
@@ -235,21 +302,52 @@ pub fn run_overlay(
     let layer_shell = state.layer_shell.clone().context("zwlr_layer_shell_v1 not available")?;
 
     // Find the matching output by name or fallback to first
-    let output_entry = state.outputs.iter().find(|o| o.name.as_deref() == Some(monitor))
-        .or_else(|| state.outputs.first())
-        .context("No outputs found")?;
-
-    let scale_int = output_entry.scale.max(1);
+    let (output_wl, scale_int, mode_width, mode_height) = {
+        let output_entry = state.outputs.iter().find(|o| o.name.as_deref() == Some(monitor))
+            .or_else(|| state.outputs.first())
+            .context("No outputs found")?;
+        (
+            output_entry.output.clone(),
+            output_entry.scale.max(1),
+            output_entry.mode_width,
+            output_entry.mode_height,
+        )
+    };
 
     // Calculate margins relative to output top-left using passed active monitor coordinates
     let rx = x - output_x;
     let ry = y - output_y;
-    let margin_left = (rx - PADDING).max(0);
-    let margin_top = (ry - PADDING).max(0);
 
-    // Overlay surface size (logical)
-    let w_logical = w + PADDING * 2;
-    let h_logical = h + PADDING * 2;
+    // Create layer surface
+    let surface = compositor.create_surface(&qh, ());
+    let layer_surface = layer_shell.get_layer_surface(
+        &surface,
+        Some(&output_wl),
+        Layer::Overlay,
+        "shot-overlay".to_string(),
+        &qh,
+        SurfaceKey(0),
+    );
+
+    // Full screen overlay
+    layer_surface.set_anchor(Anchor::Top | Anchor::Bottom | Anchor::Left | Anchor::Right);
+    layer_surface.set_keyboard_interactivity(KeyboardInteractivity::None);
+    layer_surface.set_exclusive_zone(-1);
+
+    // Set mouse pass-through: empty input region
+    let input_region = compositor.create_region(&qh, ());
+    surface.set_input_region(Some(&input_region));
+
+    surface.commit();
+    event_queue.roundtrip(&mut state).context("Failed to configure overlay surface")?;
+
+    // Logical dimensions configured by compositor
+    let w_logical = state.configured_w.map(|w| w as i32)
+        .or_else(|| mode_width.map(|w| w / scale_int))
+        .unwrap_or(1920);
+    let h_logical = state.configured_h.map(|h| h as i32)
+        .or_else(|| mode_height.map(|h| h / scale_int))
+        .unwrap_or(1080);
 
     // Buffer dimensions (physical)
     let w_phys = w_logical * scale_int;
@@ -271,33 +369,9 @@ pub fn run_overlay(
     let buffer = pool.create_buffer(0, w_phys, h_phys, stride, wl_shm::Format::Argb8888, &qh, ());
     pool.destroy();
 
-    // Create layer surface
-    let surface = compositor.create_surface(&qh, ());
-    let layer_surface = layer_shell.get_layer_surface(
-        &surface,
-        Some(&output_entry.output),
-        Layer::Overlay,
-        "shot-overlay".to_string(),
-        &qh,
-        SurfaceKey(0),
-    );
-
-    layer_surface.set_anchor(Anchor::Top | Anchor::Left);
-    layer_surface.set_keyboard_interactivity(KeyboardInteractivity::None);
-    layer_surface.set_exclusive_zone(-1);
-    layer_surface.set_size(w_logical as u32, h_logical as u32);
-    layer_surface.set_margin(margin_top, 0, 0, margin_left);
-
     if scale_int > 1 {
         surface.set_buffer_scale(scale_int);
     }
-
-    // Set mouse pass-through: empty input region
-    let input_region = compositor.create_region(&qh, ());
-    surface.set_input_region(Some(&input_region));
-
-    surface.commit();
-    event_queue.roundtrip(&mut state).context("Failed to configure overlay surface")?;
 
     state.surface = Some(SurfaceEntry {
         surface,
@@ -320,7 +394,17 @@ pub fn run_overlay(
         let alpha = (((elapsed * 2.0 * std::f32::consts::PI * 1.5).sin() + 1.0) * 0.5 * 200.0 + 55.0) as u8;
         
         let surface_entry = state.surface.as_mut().unwrap();
-        draw_border(&mut surface_entry.mmap, w_phys, h_phys, BORDER_THICK * scale_int, alpha);
+        draw_selection_border(
+            &mut surface_entry.mmap,
+            w_phys,
+            h_phys,
+            rx,
+            ry,
+            w,
+            h,
+            scale_int,
+            alpha,
+        );
         
         surface_entry.surface.damage(0, 0, w_logical, h_logical);
         surface_entry.surface.commit();

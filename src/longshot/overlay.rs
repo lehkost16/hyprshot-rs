@@ -383,6 +383,7 @@ pub fn run_overlay(
 
     let surface_entry = state.surface.as_mut().unwrap();
     surface_entry.surface.attach(Some(&surface_entry.buffer), 0, 0);
+    surface_entry.surface.damage_buffer(0, 0, w_phys, h_phys);
     surface_entry.surface.commit();
     conn.flush().ok();
 
@@ -406,7 +407,7 @@ pub fn run_overlay(
             alpha,
         );
         
-        surface_entry.surface.damage(0, 0, w_logical, h_logical);
+        surface_entry.surface.damage_buffer(0, 0, w_phys, h_phys);
         surface_entry.surface.commit();
         conn.flush().ok();
 

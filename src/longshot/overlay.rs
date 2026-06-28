@@ -205,7 +205,7 @@ pub fn run_overlay(
     y: i32,
     w: i32,
     h: i32,
-    scale: f64,
+    _scale: f64,
     monitor: &str,
     output_x: i32,
     output_y: i32,
@@ -239,7 +239,7 @@ pub fn run_overlay(
         .or_else(|| state.outputs.first())
         .context("No outputs found")?;
 
-    let scale_int = scale.round() as i32;
+    let scale_int = output_entry.scale.max(1);
 
     // Calculate margins relative to output top-left using passed active monitor coordinates
     let rx = x - output_x;

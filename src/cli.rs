@@ -109,6 +109,10 @@ pub enum Subcommands {
         scale: f64,
         #[arg(long)]
         monitor: String,
+        #[arg(long)]
+        ox: i32,
+        #[arg(long)]
+        oy: i32,
     },
 }
 

@@ -155,8 +155,8 @@ pub fn handle_longshot(args: &Args, config: &config::Config) -> Result<()> {
         let geometry = selector::select_region(debug)?;
 
         // Query active monitor name & scale factor
-        let (monitor, scale_f) = super::external::get_active_monitor_info(debug)
-            .unwrap_or(("eDP-1".to_string(), 1.0));
+        let (monitor, scale_f, ox, oy) = super::external::get_active_monitor_info(debug)
+            .unwrap_or(("eDP-1".to_string(), 1.0, 0, 0));
         let scale = scale_f;
 
         let video_path = format!("/tmp/shot_longshot_{}.mp4", std::process::id());
@@ -192,6 +192,8 @@ pub fn handle_longshot(args: &Args, config: &config::Config) -> Result<()> {
             .arg("--h").arg(geometry.height.to_string())
             .arg("--scale").arg(scale.to_string())
             .arg("--monitor").arg(&monitor)
+            .arg("--ox").arg(ox.to_string())
+            .arg("--oy").arg(oy.to_string())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()

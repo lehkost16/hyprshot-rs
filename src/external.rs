@@ -13,7 +13,7 @@ use crate::selector;
 use crate::freeze;
 use crate::utils::output_with_timeout;
 
-pub fn get_active_monitor_info(_debug: bool) -> Result<(String, f64)> {
+pub fn get_active_monitor_info(_debug: bool) -> Result<(String, f64, i32, i32)> {
     const IPC_TIMEOUT: Duration = Duration::from_secs(3);
     // Try Hyprland first
     if let Ok(output) = output_with_timeout(
@@ -38,7 +38,9 @@ pub fn get_active_monitor_info(_debug: bool) -> Result<(String, f64)> {
                         if let Some(m) = arr.iter().find(|m| m["activeWorkspace"]["id"] == active_workspace["id"]) {
                             let name = m["name"].as_str().unwrap_or("").to_string();
                             let scale = m["scale"].as_f64().unwrap_or(1.0);
-                            return Ok((name, scale));
+                            let x = m["x"].as_i64().unwrap_or(0) as i32;
+                            let y = m["y"].as_i64().unwrap_or(0) as i32;
+                            return Ok((name, scale, x, y));
                         }
                     }
                 }
@@ -72,7 +74,10 @@ pub fn get_active_monitor_info(_debug: bool) -> Result<(String, f64)> {
                                     if let Some(o) = arr_mon.iter().find(|o| o["name"].as_str() == Some(focused_output)) {
                                         let name = o["name"].as_str().unwrap_or("").to_string();
                                         let scale = o["scale"].as_f64().unwrap_or(1.0);
-                                        return Ok((name, scale));
+                                        let rect = &o["rect"];
+                                        let x = rect["x"].as_i64().unwrap_or(0) as i32;
+                                        let y = rect["y"].as_i64().unwrap_or(0) as i32;
+                                        return Ok((name, scale, x, y));
                                     }
                                 }
                             }
@@ -83,7 +88,7 @@ pub fn get_active_monitor_info(_debug: bool) -> Result<(String, f64)> {
         }
     }
     
-    Ok(("eDP-1".to_string(), 1.0))
+    Ok(("eDP-1".to_string(), 1.0, 0, 0))
 }
 
 pub fn run_external_screenshot_tool(
@@ -105,7 +110,7 @@ pub fn run_external_screenshot_tool(
         config.advanced.freeze_on_region
     };
     
-    let (monitor_name, scale) = get_active_monitor_info(debug).unwrap_or(("".to_string(), 1.0));
+    let (monitor_name, scale, _, _) = get_active_monitor_info(debug).unwrap_or(("".to_string(), 1.0, 0, 0));
     
     let freeze_guard = if freeze {
         let guard = freeze::start_freeze(None, debug)?;

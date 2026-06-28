@@ -35,8 +35,8 @@ pub fn run(mut args: Args) -> Result<()> {
     }
 
     // If overlay subcommand, run it directly without loading config or other logic
-    if let Some(Subcommands::Overlay { x, y, w, h, scale, monitor }) = &args.subcommand {
-        return longshot::overlay::run_overlay(*x, *y, *w, *h, *scale, monitor);
+    if let Some(Subcommands::Overlay { x, y, w, h, scale, monitor, ox, oy }) = &args.subcommand {
+        return longshot::overlay::run_overlay(*x, *y, *w, *h, *scale, monitor, *ox, *oy);
     }
 
     // Load config
@@ -107,7 +107,7 @@ pub fn run(mut args: Args) -> Result<()> {
             let is_region = matches!(subcommand, Subcommands::Area);
             let freeze = is_region && (args.freeze || config.advanced.freeze_on_region);
             
-            let (_monitor_name, _) = external::get_active_monitor_info(debug).unwrap_or(("".to_string(), 1.0));
+            let (_monitor_name, _, _, _) = external::get_active_monitor_info(debug).unwrap_or(("".to_string(), 1.0, 0, 0));
             
             let freeze_guard = if freeze {
                 if debug {

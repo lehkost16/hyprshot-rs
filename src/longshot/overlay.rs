@@ -24,7 +24,7 @@ use wayland_protocols_wlr::layer_shell::v1::client::{
 };
 
 const PADDING: i32 = 10;
-const BORDER_THICK: i32 = 3;
+const BORDER_THICK: i32 = 6;
 
 #[derive(Debug)]
 struct OutputKey(usize);
@@ -207,6 +207,8 @@ pub fn run_overlay(
     h: i32,
     scale: f64,
     monitor: &str,
+    output_x: i32,
+    output_y: i32,
 ) -> Result<()> {
     let conn = Connection::connect_to_env().context("Failed to connect to Wayland")?;
     let mut event_queue = conn.new_event_queue();
@@ -238,10 +240,8 @@ pub fn run_overlay(
         .context("No outputs found")?;
 
     let scale_int = scale.round() as i32;
-    let output_x = output_entry.pos_x.unwrap_or(0);
-    let output_y = output_entry.pos_y.unwrap_or(0);
 
-    // Calculate margins relative to output top-left
+    // Calculate margins relative to output top-left using passed active monitor coordinates
     let rx = x - output_x;
     let ry = y - output_y;
     let margin_left = (rx - PADDING).max(0);

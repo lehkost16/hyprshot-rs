@@ -117,7 +117,7 @@ pub fn stitch_video(
     debug: bool,
 ) -> Result<()> {
     // 1. Calculate dimensions using float scale factor
-    let crop = (PADDING as f64 * scale).round() as usize;
+    let crop = 0usize;
     let w_phys = (w_logical as f64 * scale).round() as usize;
     let h_phys = (h_logical as f64 * scale).round() as usize;
 

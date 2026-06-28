@@ -108,6 +108,33 @@ fn match_template_vertical(
     (best_score, best_y)
 }
 
+fn get_video_dimensions(video_path: &Path) -> Result<(usize, usize)> {
+    let output = Command::new("ffprobe")
+        .arg("-v").arg("error")
+        .arg("-select_streams").arg("v:0")
+        .arg("-show_entries").arg("stream=width,height")
+        .arg("-of").arg("csv=p=0")
+        .arg(video_path)
+        .output()
+        .context("Failed to run ffprobe to query video dimensions")?;
+
+    if !output.status.success() {
+        anyhow::bail!("ffprobe failed: {}", String::from_utf8_lossy(&output.stderr));
+    }
+
+    let stdout_str = String::from_utf8_lossy(&output.stdout);
+    let trimmed = stdout_str.trim();
+    let parts: Vec<&str> = trimmed.split(',').collect();
+    if parts.len() != 2 {
+        anyhow::bail!("Invalid ffprobe output: '{}'", trimmed);
+    }
+
+    let width = parts[0].parse::<usize>().context("Failed to parse video width")?;
+    let height = parts[1].parse::<usize>().context("Failed to parse video height")?;
+
+    Ok((width, height))
+}
+
 pub fn stitch_video(
     video_path: &Path,
     output_path: &Path,
@@ -116,10 +143,17 @@ pub fn stitch_video(
     scale: f64,
     debug: bool,
 ) -> Result<()> {
-    // 1. Calculate dimensions using float scale factor
+    // 1. Get actual physical dimensions of the recorded video using ffprobe
+    let (w_phys, h_phys) = get_video_dimensions(video_path)
+        .unwrap_or_else(|e| {
+            if debug {
+                eprintln!("Warning: failed to query video dimensions via ffprobe ({}), falling back to estimate", e);
+            }
+            ((w_logical as f64 * scale).round() as usize, (h_logical as f64 * scale).round() as usize)
+        });
+
+    let scale = w_phys as f64 / w_logical as f64;
     let crop = 0usize;
-    let w_phys = (w_logical as f64 * scale).round() as usize;
-    let h_phys = (h_logical as f64 * scale).round() as usize;
 
     if w_phys <= crop * 2 || h_phys <= crop * 2 {
         anyhow::bail!("Video physical size is too small for cropping");

@@ -901,29 +901,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
 
 [[package]]
-name = "hyprshot-rs"
-version = "0.1.9"
-dependencies = [
- "anyhow",
- "chrono",
- "clap",
- "dialoguer",
- "directories",
- "dirs",
- "grim-rs",
- "memmap2",
- "notify-rust",
- "serde",
- "serde_json",
- "slurp-rs",
- "tempfile",
- "toml",
- "wayland-client",
- "wayland-protocols",
- "wayland-protocols-wlr",
-]
-
-[[package]]
 name = "iana-time-zone"
 version = "0.1.63"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1751,6 +1728,30 @@ name = "shlex"
 version = "1.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0fda2ff0d084019ba4d7c6f371c95d8fd75ce3524c3cb8fb653a3023f6323e64"
+
+[[package]]
+name = "shot"
+version = "0.1.9"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "clap",
+ "dialoguer",
+ "directories",
+ "dirs",
+ "grim-rs",
+ "image",
+ "memmap2",
+ "notify-rust",
+ "serde",
+ "serde_json",
+ "slurp-rs",
+ "tempfile",
+ "toml",
+ "wayland-client",
+ "wayland-protocols",
+ "wayland-protocols-wlr",
+]
 
 [[package]]
 name = "signal-hook-registry"

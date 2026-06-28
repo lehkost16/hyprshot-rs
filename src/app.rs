@@ -5,17 +5,16 @@ use std::thread::sleep;
 use std::time::Duration;
 
 use crate::capture;
-use crate::cli::{Args, Mode, default_filename, resolve_delay, resolve_notif_timeout};
+use crate::cli::{Args, Subcommands, default_filename, resolve_delay, resolve_notif_timeout};
 use crate::config;
 use crate::config_cmds::{
     handle_config_path, handle_init_config, handle_set_config, handle_show_config,
 };
 use crate::freeze;
-use crate::hyprland_cmds::{
-    handle_generate_hyprland_config, handle_install_binds, handle_setup_hotkeys,
-};
 use crate::save;
 use crate::utils;
+use crate::external;
+use crate::longshot;
 
 pub fn run(mut args: Args) -> Result<()> {
     // Handle config management commands first
@@ -35,224 +34,201 @@ pub fn run(mut args: Args) -> Result<()> {
         return handle_set_config(set_args);
     }
 
-    // Handle Hyprland integration commands
-    if args.generate_hyprland_config {
-        return handle_generate_hyprland_config(args.with_clipboard);
+    // If overlay subcommand, run it directly without loading config or other logic
+    if let Some(Subcommands::Overlay { x, y, w, h, scale, monitor }) = &args.subcommand {
+        return longshot::overlay::run_overlay(*x, *y, *w, *h, *scale, monitor);
     }
 
-    if args.install_binds {
-        return handle_install_binds(args.with_clipboard);
-    }
-
-    if args.setup_hotkeys {
-        return handle_setup_hotkeys();
-    }
-
-    if args.mode.is_empty() {
-        print_help();
-        return Ok(());
-    }
-
-    let debug = args.debug;
-    let clipboard_only = args.clipboard_only;
-    let raw = args.raw;
-    let command = if args.command.is_empty() {
-        None
-    } else {
-        Some(std::mem::take(&mut args.command))
-    };
-
-    let mut option: Option<Mode> = None;
-    let mut current = false;
-    let mut selected_monitor: Option<String> = None;
-
-    let modes = std::mem::take(&mut args.mode);
-    for mode in modes {
-        match mode {
-            Mode::Output | Mode::Window | Mode::Region => {
-                option = Some(mode);
-            }
-            Mode::Active => {
-                current = true;
-            }
-            Mode::OutputName(name) => {
-                selected_monitor = Some(name);
-            }
-        }
-    }
-
-    let option = option.context("A mode is required (output, region, window)")?;
-
+    // Load config
     let config = if args.no_config {
-        if debug {
+        if args.debug {
             eprintln!("Config loading disabled (--no-config flag)");
         }
         config::Config::default()
     } else {
         config::Config::load().unwrap_or_else(|e| {
-            if debug {
+            if args.debug {
                 eprintln!("Failed to load config, using defaults: {}", e);
             }
             config::Config::default()
         })
     };
 
-    // Apply settings with priority: CLI > config > default
     let silent = if args.silent {
         true
     } else {
         !config.capture.notification
     };
-
     let notif_timeout = resolve_notif_timeout(&args, &config);
 
-    let freeze = if args.freeze {
-        true
-    } else {
-        config.advanced.freeze_on_region
+    // Dispatch subcommands
+    let subcommand = match args.subcommand.take() {
+        Some(cmd) => cmd,
+        None => {
+            print_help();
+            return Ok(());
+        }
     };
 
-    let delay = resolve_delay(&args, &config);
-
-    let save_dir = config::get_screenshots_dir(args.output_folder.clone(), &config, debug)?;
-
-    let save_dir = if !clipboard_only && !raw {
-        config::ensure_directory(&save_dir.to_string_lossy())?
-    } else {
-        save_dir
-    };
-
-    let filename = args
-        .filename
-        .unwrap_or_else(|| default_filename(Local::now()));
-    let save_fullpath = save_dir.join(&filename);
-
-    if debug && !clipboard_only {
-        eprintln!("Saving in: {}", save_fullpath.display());
-    }
-
-    let freeze_guard: Option<freeze::FreezeGuard> = if freeze {
-        if debug {
-            eprintln!("Freeze requested: starting overlay thread");
+    match subcommand {
+        Subcommands::Satty => {
+            return external::run_external_screenshot_tool(&args, &config, false);
         }
-        let guard = freeze::start_freeze(selected_monitor.as_deref(), debug)?;
-        if debug {
-            eprintln!("Freeze guard acquired");
+        Subcommands::Ocr => {
+            return external::run_external_screenshot_tool(&args, &config, true);
         }
-        Some(guard)
-    } else {
-        None
-    };
-
-    if delay > Duration::from_secs(0) {
-        sleep(delay);
-    }
-
-    let mut hyprctl_cache = capture::HyprctlCache::new();
-
-    let geometry = match option {
-        Mode::Output => {
-            if current {
-                capture::grab_active_output(debug, &mut hyprctl_cache)?
-            } else if let Some(monitor) = selected_monitor {
-                capture::grab_selected_output(&monitor, debug)?
-            } else {
-                capture::grab_output(debug)?
-            }
+        Subcommands::Longshot => {
+            return longshot::handle_longshot(&args, &config);
         }
-        Mode::Region => match capture::grab_region(debug) {
-            Ok(geo) => geo,
-            Err(err) => {
-                if !silent && capture::is_region_selection_cancelled(&err) {
-                    let _ = Notification::new()
-                        .summary("Region mode")
-                        .body("Drag to select an area (not a window/output).")
-                        .appname("Hyprshot-rs")
-                        .timeout(notif_timeout as i32)
-                        .show();
+        Subcommands::Now | Subcommands::Win | Subcommands::Area | Subcommands::In5 | Subcommands::In10 => {
+            let debug = args.debug;
+            let clipboard_only = args.clipboard_only;
+            let raw = args.raw;
+            
+            // Handle countdown / delay
+            match subcommand {
+                Subcommands::In5 => {
+                    countdown(5, silent);
                 }
-                return Err(err);
+                Subcommands::In10 => {
+                    countdown(10, silent);
+                }
+                _ => {
+                    let delay = resolve_delay(&args, &config);
+                    if delay > Duration::from_secs(0) {
+                        sleep(delay);
+                    }
+                }
             }
-        },
-        Mode::Window => {
-            let geo = if current {
-                capture::grab_active_window(debug)?
+
+            let mut hyprctl_cache = capture::HyprctlCache::new();
+            
+            // Start freeze overlay if region mode
+            let is_region = matches!(subcommand, Subcommands::Area);
+            let freeze = is_region && (args.freeze || config.advanced.freeze_on_region);
+            
+            let (_monitor_name, _) = external::get_active_monitor_info(debug).unwrap_or(("".to_string(), 1.0));
+            
+            let freeze_guard = if freeze {
+                if debug {
+                    eprintln!("Freeze requested: starting overlay thread");
+                }
+                let guard = freeze::start_freeze(None, debug)?;
+                if debug {
+                    eprintln!("Freeze guard acquired");
+                }
+                Some(guard)
             } else {
-                capture::grab_window(debug, &mut hyprctl_cache)?
+                None
             };
-            utils::trim(&geo, debug)?
+
+            let geometry = match subcommand {
+                Subcommands::Now | Subcommands::In5 | Subcommands::In10 => {
+                    capture::grab_active_output(debug, &mut hyprctl_cache)?
+                }
+                Subcommands::Area => match capture::grab_region(debug) {
+                    Ok(geo) => geo,
+                    Err(err) => {
+                        if !silent && capture::is_region_selection_cancelled(&err) {
+                            let _ = Notification::new()
+                                .summary("Region mode")
+                                .body("Drag to select an area.")
+                                .appname("Shot")
+                                .timeout(notif_timeout as i32)
+                                .show();
+                        }
+                        return Err(err);
+                    }
+                },
+                Subcommands::Win => {
+                    let geo = capture::grab_window(debug, &mut hyprctl_cache)?;
+                    utils::trim(&geo, debug)?
+                }
+                _ => unreachable!(),
+            };
+
+            if let Some(guard) = freeze_guard {
+                guard.stop()?;
+            }
+
+            let save_dir = config::get_screenshots_dir(args.output_folder.clone(), &config, debug)?;
+            let save_dir = if !clipboard_only && !raw {
+                config::ensure_directory(&save_dir.to_string_lossy())?
+            } else {
+                save_dir
+            };
+            let filename = args
+                .filename
+                .unwrap_or_else(|| default_filename(Local::now()));
+            let save_fullpath = save_dir.join(&filename);
+
+            save::save_geometry(
+                &geometry,
+                &save_fullpath,
+                clipboard_only,
+                raw,
+                None, // custom external command is run in Edit mode
+                silent,
+                notif_timeout,
+                debug,
+            )?;
         }
-        _ => unreachable!(),
-    };
-
-    if let Some(guard) = freeze_guard {
-        guard.stop()?;
+        Subcommands::Overlay { .. } => unreachable!(),
     }
-
-    save::save_geometry(
-        &geometry,
-        &save_fullpath,
-        clipboard_only,
-        raw,
-        command,
-        silent,
-        notif_timeout,
-        debug,
-    )?;
 
     Ok(())
+}
+
+fn countdown(seconds: u64, silent: bool) {
+    if silent {
+        sleep(Duration::from_secs(seconds));
+        return;
+    }
+    for i in (1..=seconds).rev() {
+        let _ = Notification::new()
+            .summary("准备截图")
+            .body(&format!("倒计时: {} 秒", i))
+            .timeout(1000)
+            .appname("Shot")
+            .show();
+        sleep(Duration::from_secs(1));
+    }
 }
 
 fn print_help() {
     println!(
         r#"
-Usage: hyprshot-rs [options ..] [-m [mode] ..] -- [command]
+Usage: shot [options ..] <command>
 
-Hyprshot-rs is an utility to easily take screenshot in Hyprland using your mouse.
+Shot is a pure Rust screenshot utility for Wayland/Hyprland.
 
-It allows taking screenshots of windows, regions and monitors which are saved to a folder of your choosing and copied to your clipboard.
-
-Examples:
-  capture a window                      `hyprshot-rs -m window`
-  capture active window to clipboard    `hyprshot-rs -m window -m active --clipboard-only`
-  capture selected monitor              `hyprshot-rs -m output -m DP-1`
+Commands:
+  now           Take a screenshot of the current monitor
+  win           Take a screenshot of a window
+  area          Take a screenshot of a selected region
+  edit          Take a screenshot of a selected region and open in editor
+  ocr           Take a screenshot of a selected region and perform OCR
+  in5           Take a screenshot of the current monitor after 5s countdown
+  in10          Take a screenshot of the current monitor after 10s countdown
+  longshot      Start/stop a scrolling screenshot
 
 Options:
   -h, --help                show help message
-  -m, --mode                one of: output, window, region, active, OUTPUT_NAME
   -o, --output-folder       directory in which to save screenshot
   -f, --filename            the file name of the resulting screenshot
   -D, --delay               how long to delay taking the screenshot after selection (seconds)
   --freeze                  freeze the screen on initialization
   -d, --debug               print debug information
-  -s, --silent              don't send notification when screenshot is saved
+  -s, --silent              don't send notification
   -r, --raw                 output raw image data to stdout
-  -n, --notif-timeout       notification timeout in milliseconds (default 5000)
-  --clipboard-only          copy screenshot to clipboard and don't save image in disk
-  --no-config               don't load config file (use defaults and CLI args only)
-  -- [command]              open screenshot with a command of your choosing. e.g. hyprshot-rs -m window -- mirage
+  -n, --notif-timeout       notification timeout in milliseconds
+  --clipboard-only          copy screenshot to clipboard and don't save to disk
 
 Config Management:
-  --init-config             initialize default config file (~/.config/hyprshot-rs/config.toml)
+  --init-config             initialize default config file
   --show-config             show current configuration
   --config-path             show path to config file
-  --set KEY VALUE           set config value (e.g., --set paths.screenshots_dir ~/Screenshots)
-
-Hyprland Integration:
-  --generate-hyprland-config    generate keybindings for Hyprland
-  --install-binds               install keybindings to hyprland.conf (creates backup)
-  --with-clipboard              include clipboard-only variants (use with above commands)
-  --setup-hotkeys               interactive wizard to configure hotkeys
-
-Modes:
-  output        take screenshot of an entire monitor
-  window        take screenshot of an open window
-  region        take screenshot of selected region
-  active        take screenshot of active window|output
-                (you must use --mode again with the intended selection)
-  OUTPUT_NAME   take screenshot of output with OUTPUT_NAME
-                (you must use --mode again with the intended selection)
-                (you can get this from `hyprctl monitors`)
+  --set KEY VALUE           set config value
 "#
     );
 }

@@ -1,5 +1,5 @@
 use chrono::{DateTime, Local};
-use clap::Parser;
+use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -7,26 +7,12 @@ use crate::config;
 
 #[derive(Parser)]
 #[command(
-    name = "hyprshot-rs",
+    name = "shot",
     about = "Utility to easily take screenshots in Hyprland"
 )]
 pub struct Args {
-    #[arg(
-        short = 'm',
-        long,
-        value_parser = clap::builder::ValueParser::new(
-            |s: &str| -> std::result::Result<Mode, String> {
-            match s.to_ascii_lowercase().as_str() {
-                "output" => Ok(Mode::Output),
-                "window" => Ok(Mode::Window),
-                "region" => Ok(Mode::Region),
-                "active" => Ok(Mode::Active),
-                _ => Ok(Mode::OutputName(s.to_string())),
-            }
-        }),
-        help = "Mode: output, window, region, active, or OUTPUT_NAME"
-    )]
-    pub mode: Vec<Mode>,
+    #[command(subcommand)]
+    pub subcommand: Option<Subcommands>,
 
     #[arg(short, long, help = "Directory to save screenshot")]
     pub output_folder: Option<PathBuf>,
@@ -54,9 +40,6 @@ pub struct Args {
 
     #[arg(long, help = "Copy to clipboard and don't save to disk")]
     pub clipboard_only: bool,
-
-    #[arg(last = true, help = "Command to open screenshot (e.g., 'mirage')")]
-    pub command: Vec<String>,
 
     #[arg(long, help = "Initialize default config file")]
     pub init_config: bool,
@@ -94,10 +77,45 @@ pub struct Args {
     pub no_config: bool,
 }
 
+#[derive(Subcommand, Clone, Debug)]
+pub enum Subcommands {
+    #[command(about = "Screenshot of current monitor")]
+    Now,
+    #[command(about = "Screenshot of active or selected window")]
+    Win,
+    #[command(about = "Screenshot of selected region")]
+    Area,
+    #[command(about = "Screenshot of selected region and edit with satty annotation tool")]
+    Satty,
+    #[command(about = "Screenshot of selected region and perform OCR")]
+    Ocr,
+    #[command(about = "Screenshot of current monitor after 5 seconds delay")]
+    In5,
+    #[command(about = "Screenshot of current monitor after 10 seconds delay")]
+    In10,
+    #[command(about = "Scroll recording and stitch long screenshot")]
+    Longshot,
+    #[command(hide = true)]
+    Overlay {
+        #[arg(long)]
+        x: i32,
+        #[arg(long)]
+        y: i32,
+        #[arg(long)]
+        w: i32,
+        #[arg(long)]
+        h: i32,
+        #[arg(long)]
+        scale: f64,
+        #[arg(long)]
+        monitor: String,
+    },
+}
+
 impl std::fmt::Debug for Args {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Args")
-            .field("mode", &self.mode)
+            .field("subcommand", &self.subcommand)
             .field("output_folder", &self.output_folder)
             .field("filename", &self.filename)
             .field("delay", &self.delay)
@@ -107,7 +125,6 @@ impl std::fmt::Debug for Args {
             .field("raw", &self.raw)
             .field("notif_timeout", &self.notif_timeout)
             .field("clipboard_only", &self.clipboard_only)
-            .field("command", &self.command)
             .finish()
     }
 }
@@ -129,17 +146,8 @@ pub fn resolve_delay(args: &Args, config: &config::Config) -> Duration {
 
 pub fn default_filename(now: DateTime<Local>) -> String {
     format!(
-        "{}-{:03}_hyprshot.png",
+        "{}-{:03}_shot.png",
         now.format("%Y-%m-%d-%H%M%S"),
         now.timestamp_subsec_millis()
     )
-}
-
-#[derive(Clone, Debug)]
-pub enum Mode {
-    Output,
-    Window,
-    Region,
-    Active,
-    OutputName(String),
 }

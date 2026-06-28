@@ -16,6 +16,10 @@ pub struct Config {
     pub capture: CaptureConfig,
     #[serde(default)]
     pub advanced: AdvancedConfig,
+    #[serde(default)]
+    pub satty: SattyConfig,
+    #[serde(default)]
+    pub ocr: OcrConfig,
 }
 
 /// Configuration for paths
@@ -79,7 +83,31 @@ pub struct AdvancedConfig {
     pub delay_ms: u32,
 }
 
+/// Configuration for screenshot editing tool
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct SattyConfig {
+    /// Command to edit/annotate screenshot
+    #[serde(default = "default_satty_command")]
+    pub command: String,
+}
+
+/// Configuration for OCR tool
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct OcrConfig {
+    /// Command to perform OCR on screenshot
+    #[serde(default = "default_ocr_command")]
+    pub command: String,
+}
+
 // Default value functions for serde
+fn default_satty_command() -> String {
+    "satty --filename {path}".to_string()
+}
+
+fn default_ocr_command() -> String {
+    "nbocr recognize -l chinese -d v6-tiny {path} -f text -t 8".to_string()
+}
+
 fn default_screenshots_dir() -> String {
     "~/Pictures".to_string()
 }
@@ -149,6 +177,22 @@ impl Default for AdvancedConfig {
     }
 }
 
+impl Default for SattyConfig {
+    fn default() -> Self {
+        Self {
+            command: default_satty_command(),
+        }
+    }
+}
+
+impl Default for OcrConfig {
+    fn default() -> Self {
+        Self {
+            command: default_ocr_command(),
+        }
+    }
+}
+
 #[allow(clippy::derivable_impls)]
 impl Default for Config {
     fn default() -> Self {
@@ -157,6 +201,8 @@ impl Default for Config {
             hotkeys: HotkeysConfig::default(),
             capture: CaptureConfig::default(),
             advanced: AdvancedConfig::default(),
+            satty: SattyConfig::default(),
+            ocr: OcrConfig::default(),
         }
     }
 }
@@ -412,6 +458,10 @@ impl Config {
                 result.push_str("\n# Capture settings\n");
             } else if line.starts_with("[advanced]") {
                 result.push_str("\n# Advanced settings\n");
+            } else if line.starts_with("[satty]") {
+                result.push_str("\n# Satty annotation tool settings\n");
+            } else if line.starts_with("[ocr]") {
+                result.push_str("\n# OCR tool settings\n");
             }
 
             result.push_str(line);

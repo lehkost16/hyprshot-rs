@@ -10,6 +10,9 @@ mod imp {
         thread,
         time::Duration,
     };
+    use serde_json::Value;
+    use std::process::Command;
+    use crate::utils::output_with_timeout;
     use wayland_client::{
         Connection, Dispatch, QueueHandle,
         protocol::{
@@ -32,28 +35,54 @@ mod imp {
         zwlr_layer_surface_v1::{Anchor, KeyboardInteractivity, ZwlrLayerSurfaceV1},
     };
 
+    pub enum FreezeGuardType {
+        Native {
+            stop_tx: mpsc::Sender<()>,
+            join: Option<thread::JoinHandle<Result<()>>>,
+        },
+        Hyprpicker {
+            child: std::process::Child,
+        },
+    }
+
     pub struct FreezeGuard {
-        stop_tx: mpsc::Sender<()>,
-        join: Option<thread::JoinHandle<Result<()>>>,
+        pub guard: FreezeGuardType,
     }
 
     impl FreezeGuard {
         pub fn stop(mut self) -> Result<()> {
-            let _ = self.stop_tx.send(());
-            if let Some(join) = self.join.take() {
-                return join
-                    .join()
-                    .unwrap_or_else(|_| Err(anyhow::anyhow!("Freeze thread panicked")));
+            match &mut self.guard {
+                FreezeGuardType::Native { stop_tx, join } => {
+                    let _ = stop_tx.send(());
+                    if let Some(j) = join.take() {
+                        return j
+                            .join()
+                            .unwrap_or_else(|_| Err(anyhow::anyhow!("Freeze thread panicked")));
+                    }
+                    Ok(())
+                }
+                FreezeGuardType::Hyprpicker { child } => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    Ok(())
+                }
             }
-            Ok(())
         }
     }
 
     impl Drop for FreezeGuard {
         fn drop(&mut self) {
-            let _ = self.stop_tx.send(());
-            if let Some(join) = self.join.take() {
-                let _ = join.join();
+            match &mut self.guard {
+                FreezeGuardType::Native { stop_tx, join } => {
+                    let _ = stop_tx.send(());
+                    if let Some(j) = join.take() {
+                        let _ = j.join();
+                    }
+                }
+                FreezeGuardType::Hyprpicker { child } => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                }
             }
         }
     }
@@ -70,7 +99,115 @@ mod imp {
         height: u32,
     }
 
+    #[derive(Debug, Clone)]
+    struct MonitorInfo {
+        name: String,
+        x: i32,
+        y: i32,
+        logical_w: i32,
+        logical_h: i32,
+        scale: f64,
+    }
+
+    fn get_all_monitors_info() -> Vec<MonitorInfo> {
+        const IPC_TIMEOUT: Duration = Duration::from_secs(3);
+        // Try Hyprland
+        if let Ok(output) = output_with_timeout(
+            {
+                let mut cmd = Command::new("hyprctl");
+                cmd.arg("monitors").arg("-j");
+                cmd
+            },
+            IPC_TIMEOUT,
+        ) {
+            if let Ok(monitors) = serde_json::from_slice::<Value>(&output.stdout) {
+                if let Some(arr) = monitors.as_array() {
+                    let mut list = Vec::new();
+                    for m in arr {
+                        let name = m["name"].as_str().unwrap_or("").to_string();
+                        let x = m["x"].as_i64().unwrap_or(0) as i32;
+                        let y = m["y"].as_i64().unwrap_or(0) as i32;
+                        let logical_w = m["width"].as_i64().unwrap_or(0) as i32;
+                        let logical_h = m["height"].as_i64().unwrap_or(0) as i32;
+                        let scale = m["scale"].as_f64().unwrap_or(1.0);
+                        list.push(MonitorInfo {
+                            name,
+                            x,
+                            y,
+                            logical_w,
+                            logical_h,
+                            scale,
+                        });
+                    }
+                    return list;
+                }
+            }
+        }
+        // Try Sway
+        if let Ok(output) = output_with_timeout(
+            {
+                let mut cmd = Command::new("swaymsg");
+                cmd.arg("-t").arg("get_outputs");
+                cmd
+            },
+            IPC_TIMEOUT,
+        ) {
+            if let Ok(outputs) = serde_json::from_slice::<Value>(&output.stdout) {
+                if let Some(arr) = outputs.as_array() {
+                    let mut list = Vec::new();
+                    for o in arr {
+                        let name = o["name"].as_str().unwrap_or("").to_string();
+                        let rect = &o["rect"];
+                        let x = rect["x"].as_i64().unwrap_or(0) as i32;
+                        let y = rect["y"].as_i64().unwrap_or(0) as i32;
+                        let logical_w = rect["width"].as_i64().unwrap_or(0) as i32;
+                        let logical_h = rect["height"].as_i64().unwrap_or(0) as i32;
+                        let scale = o["scale"].as_f64().unwrap_or(1.0);
+                        list.push(MonitorInfo {
+                            name,
+                            x,
+                            y,
+                            logical_w,
+                            logical_h,
+                            scale,
+                        });
+                    }
+                    return list;
+                }
+            }
+        }
+        Vec::new()
+    }
+
     pub fn start_freeze(selected_output: Option<&str>, debug: bool) -> Result<FreezeGuard> {
+        // If on Hyprland, try to use hyprpicker -r -z as it natively supports Hyprland's internal scaling/oversampling layout
+        if std::env::var("HYPRLAND_INSTANCE_SIGNATURE").is_ok() {
+            if debug {
+                eprintln!("Freeze: detected Hyprland session, attempting to spawn hyprpicker");
+            }
+            match Command::new("hyprpicker")
+                .arg("-r")
+                .arg("-z")
+                .spawn()
+            {
+                Ok(child) => {
+                    if debug {
+                        eprintln!("Freeze: successfully spawned hyprpicker -r -z");
+                    }
+                    // Wait a short duration for the overlay to map
+                    thread::sleep(Duration::from_millis(200));
+                    return Ok(FreezeGuard {
+                        guard: FreezeGuardType::Hyprpicker { child },
+                    });
+                }
+                Err(e) => {
+                    if debug {
+                        eprintln!("Freeze: failed to spawn hyprpicker ({}). Falling back to native.", e);
+                    }
+                }
+            }
+        }
+
         let (stop_tx, stop_rx) = mpsc::channel();
         let (ready_tx, ready_rx) = mpsc::channel();
 
@@ -85,7 +222,9 @@ mod imp {
                 if debug {
                     eprintln!("Freeze overlay initialized");
                 }
-                Ok(FreezeGuard { stop_tx, join })
+                Ok(FreezeGuard {
+                    guard: FreezeGuardType::Native { stop_tx, join },
+                })
             }
             Ok(Err(err)) => {
                 eprintln!("Freeze disabled: {}", err);
@@ -93,8 +232,10 @@ mod imp {
                     let _ = join.join();
                 }
                 Ok(FreezeGuard {
-                    stop_tx,
-                    join: None,
+                    guard: FreezeGuardType::Native {
+                        stop_tx,
+                        join: None,
+                    },
                 })
             }
             Err(mpsc::RecvTimeoutError::Timeout) => {
@@ -149,11 +290,14 @@ mod imp {
     struct SurfaceEntry {
         surface: WlSurface,
         layer_surface: ZwlrLayerSurfaceV1,
-        buffer: WlBuffer,
+        buffer: Option<WlBuffer>,
         _input_region: WlRegion,
-        _tmp: tempfile::NamedTempFile,
-        _mmap: memmap2::MmapMut,
+        _tmp: Option<tempfile::NamedTempFile>,
+        _mmap: Option<memmap2::MmapMut>,
         configured: bool,
+        configured_w: Option<u32>,
+        configured_h: Option<u32>,
+        output_idx: usize,
     }
 
     struct State {
@@ -163,6 +307,7 @@ mod imp {
         xdg_output_manager: Option<ZxdgOutputManagerV1>,
         outputs: Vec<OutputEntry>,
         surfaces: Vec<SurfaceEntry>,
+        monitors_info: Vec<MonitorInfo>,
     }
 
     impl Dispatch<WlRegistry, ()> for State {
@@ -259,7 +404,19 @@ mod imp {
                     entry.scale = factor.max(1);
                 }
                 wayland_client::protocol::wl_output::Event::Name { name } => {
-                    entry.name = Some(name);
+                    entry.name = Some(name.clone());
+                    if let Some(info) = state.monitors_info.iter().find(|info| info.name == name) {
+                        entry.logical_x = Some(info.x);
+                        entry.logical_y = Some(info.y);
+                        entry.logical_width = Some(info.logical_w);
+                        entry.logical_height = Some(info.logical_h);
+                        let int_scale = if (info.scale - info.scale.round()).abs() < 0.01 {
+                            info.scale.round() as i32
+                        } else {
+                            1
+                        };
+                        entry.scale = int_scale;
+                    }
                 }
                 _ => {}
             }
@@ -310,10 +467,13 @@ mod imp {
                 match event {
                     wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_surface_v1::Event::Configure {
                         serial,
-                        ..
+                        width,
+                        height,
                     } => {
                         surface.ack_configure(serial);
                         entry.configured = true;
+                        entry.configured_w = Some(width);
+                        entry.configured_h = Some(height);
                     }
                     wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_surface_v1::Event::Closed => {
                         entry.configured = false;
@@ -442,6 +602,7 @@ mod imp {
             xdg_output_manager: None,
             outputs: Vec::new(),
             surfaces: Vec::new(),
+            monitors_info: get_all_monitors_info(),
         };
 
         event_queue
@@ -456,11 +617,53 @@ mod imp {
                 let xdg_output = manager.get_xdg_output(&entry.output, &qh, OutputKey(idx));
                 entry.xdg_output = Some(xdg_output);
             }
-            event_queue
-                .roundtrip(&mut state)
-                .context("Failed to receive output names")?;
-            if debug {
-                eprintln!("Freeze: received output names");
+        }
+
+        event_queue
+            .roundtrip(&mut state)
+            .context("Failed to receive output configuration events")?;
+        if debug {
+            eprintln!("Freeze: received output configuration events");
+        }
+
+        // Match Wayland outputs with compositor monitor info
+        for entry in &mut state.outputs {
+            // 1. Try matching by name (most reliable, works if Name event was received)
+            let mut matched = false;
+            if let Some(name) = &entry.name {
+                if let Some(info) = state.monitors_info.iter().find(|info| info.name == *name) {
+                    if debug {
+                        eprintln!("Freeze: matched output '{}' via name", info.name);
+                    }
+                    entry.logical_x = Some(info.x);
+                    entry.logical_y = Some(info.y);
+                    entry.logical_width = Some(info.logical_w);
+                    entry.logical_height = Some(info.logical_h);
+                    matched = true;
+                }
+            }
+
+            // 2. Fallback to match by position and physical size
+            if !matched {
+                if let (Some(pos_x), Some(pos_y), Some(mode_w), Some(mode_h)) = (entry.pos_x, entry.pos_y, entry.mode_width, entry.mode_height) {
+                    if let Some(info) = state.monitors_info.iter().find(|info| {
+                        let phys_w = (info.logical_w as f64 * info.scale).round() as i32;
+                        let phys_h = (info.logical_h as f64 * info.scale).round() as i32;
+                        (info.x - pos_x).abs() < 5
+                            && (info.y - pos_y).abs() < 5
+                            && (phys_w - mode_w).abs() < 5
+                            && (phys_h - mode_h).abs() < 5
+                    }) {
+                        if debug {
+                            eprintln!("Freeze: matched output '{}' via position & size", info.name);
+                        }
+                        entry.name = Some(info.name.clone());
+                        entry.logical_x = Some(info.x);
+                        entry.logical_y = Some(info.y);
+                        entry.logical_width = Some(info.logical_w);
+                        entry.logical_height = Some(info.logical_h);
+                    }
+                }
             }
         }
 
@@ -547,6 +750,8 @@ Check the support for this protocol on Hyprland/Sway/River/Wayfire."
             eprintln!("Freeze: output mapping prepared");
         }
 
+        let mut captures = Vec::new();
+
         for (idx, meta_index) in mapping.into_iter().enumerate() {
             if stop_rx.try_recv().is_ok() {
                 let _ = ready_tx.send(Ok(()));
@@ -573,11 +778,12 @@ Check the support for this protocol on Hyprland/Sway/River/Wayfire."
 
             let width = capture.width();
             let height = capture.height();
-            let capture = CaptureImage {
+            let capture_img = CaptureImage {
                 data: capture.into_data(),
                 width,
                 height,
             };
+            captures.push(capture_img);
 
             let surface_idx = state.surfaces.len();
             let surface = compositor.create_surface(&qh, ());
@@ -594,38 +800,22 @@ Check the support for this protocol on Hyprland/Sway/River/Wayfire."
             layer_surface.set_keyboard_interactivity(KeyboardInteractivity::None);
             layer_surface.set_exclusive_zone(-1);
 
-            if let Some((logical_w, logical_h)) = output_logical_size(output)
-                && logical_w > 0
-                && logical_h > 0
-            {
-                layer_surface.set_size(logical_w as u32, logical_h as u32);
-            }
-
-            let buffer_scale = output_buffer_scale(output);
-            if buffer_scale > 1 {
-                surface.set_buffer_scale(buffer_scale);
-            }
-
             let input_region = compositor.create_region(&qh, ());
             surface.set_input_region(Some(&input_region));
 
             surface.commit();
 
-            let (buffer, tmp, mmap) = create_buffer(&shm, &qh, &capture).with_context(|| {
-                format!(
-                    "Failed to create buffer for output '{}'",
-                    output.name.as_deref().unwrap_or(&meta.name)
-                )
-            })?;
-
             state.surfaces.push(SurfaceEntry {
                 surface,
                 layer_surface,
-                buffer,
+                buffer: None,
                 _input_region: input_region,
-                _tmp: tmp,
-                _mmap: mmap,
+                _tmp: None,
+                _mmap: None,
                 configured: false,
+                configured_w: None,
+                configured_h: None,
+                output_idx: idx,
             });
         }
 
@@ -643,10 +833,73 @@ Check the support for this protocol on Hyprland/Sway/River/Wayfire."
             .roundtrip(&mut state)
             .context("Failed to configure freeze surfaces")?;
 
-        for entry in &state.surfaces {
-            entry.surface.attach(Some(&entry.buffer), 0, 0);
+        for (surface_idx, entry) in state.surfaces.iter_mut().enumerate() {
+            let output = &state.outputs[entry.output_idx];
+            let capture = &captures[surface_idx];
+
+            let logical_w = entry.configured_w.map(|w| w as i32)
+                .or_else(|| output.logical_width)
+                .unwrap_or(0);
+            let logical_h = entry.configured_h.map(|h| h as i32)
+                .or_else(|| output.logical_height)
+                .unwrap_or(0);
+
+            let buffer_scale = output_buffer_scale(output);
+
+            let width = capture.width;
+            let height = capture.height;
+            let mut raw_data = capture.data.clone();
+
+            // Calculate target physical size based on logical size and compositor scale
+            let (target_w, target_h) = if logical_w > 0 && logical_h > 0 {
+                ((logical_w * buffer_scale) as u32, (logical_h * buffer_scale) as u32)
+            } else {
+                (width, height)
+            };
+
+            if width != target_w || height != target_h {
+                if debug {
+                    eprintln!(
+                        "Resizing captured image for output {} from {}x{} to target buffer size {}x{} (scale={})",
+                        output.name.as_deref().unwrap_or(""), width, height, target_w, target_h, buffer_scale
+                    );
+                }
+                if let Some(img_buf) = image::ImageBuffer::<image::Rgba<u8>, Vec<u8>>::from_raw(width, height, raw_data.clone()) {
+                    let resized = image::imageops::resize(
+                        &img_buf,
+                        target_w,
+                        target_h,
+                        image::imageops::FilterType::Nearest,
+                    );
+                    raw_data = resized.into_raw();
+                }
+            }
+
+            let capture_img = CaptureImage {
+                data: raw_data,
+                width: target_w,
+                height: target_h,
+            };
+
+            let (buffer, tmp, mmap) = create_buffer(&shm, &qh, &capture_img).with_context(|| {
+                format!(
+                    "Failed to create buffer for output '{}'",
+                    output.name.as_deref().unwrap_or("")
+                )
+            })?;
+
+            if buffer_scale > 1 {
+                entry.surface.set_buffer_scale(buffer_scale);
+            }
+
+            entry.surface.attach(Some(&buffer), 0, 0);
             entry.surface.commit();
+
+            entry.buffer = Some(buffer);
+            entry._tmp = Some(tmp);
+            entry._mmap = Some(mmap);
         }
+
         conn.flush().ok();
         if debug {
             eprintln!("Freeze: overlay committed");
@@ -668,7 +921,9 @@ Check the support for this protocol on Hyprland/Sway/River/Wayfire."
         for entry in state.surfaces {
             entry.layer_surface.destroy();
             entry.surface.destroy();
-            entry.buffer.destroy();
+            if let Some(buffer) = entry.buffer {
+                buffer.destroy();
+            }
         }
         drop(registry);
 
@@ -748,15 +1003,6 @@ Check the support for this protocol on Hyprland/Sway/River/Wayfire."
     }
 
     fn output_buffer_scale(output: &OutputEntry) -> i32 {
-        if let (Some(mode_width), Some(logical_width)) = (output.mode_width, output.logical_width)
-            && logical_width > 0
-        {
-            let scale = (mode_width as f64) / (logical_width as f64);
-            if (scale - scale.round()).abs() < 0.01 {
-                return scale.round().max(1.0) as i32;
-            }
-            return 1;
-        }
         output.scale.max(1)
     }
 

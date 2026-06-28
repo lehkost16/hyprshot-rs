@@ -12,7 +12,9 @@ mod hyprland_cmds;
 mod save;
 mod selector;
 mod utils;
-pub use cli::{Args, Mode, default_filename, resolve_delay, resolve_notif_timeout};
+mod external;
+mod longshot;
+pub use cli::{Args, Subcommands, default_filename, resolve_delay, resolve_notif_timeout};
 
 fn main() -> Result<()> {
     let args = Args::parse();

@@ -206,25 +206,55 @@ pub fn handle_longshot(args: &Args, config: &config::Config) -> Result<()> {
         let ow_sel = geometry.width + padding * 2;
         let oh_sel = geometry.height + padding * 2;
 
-        let overlay_cmd = format!(
-            "[move {} {}; size {} {}] env XDG_SESSION_TYPE=wayland WAYLAND_DISPLAY={} {} {} {}",
-            ox_sel, oy_sel, ow_sel, oh_sel,
-            std::env::var("WAYLAND_DISPLAY").unwrap_or_else(|_| "wayland-0".to_string()),
-            overlay_path.to_string_lossy(),
-            ow_sel, oh_sel
-        );
+        let mut spawned = false;
+        if Command::new("hyprctl").arg("version").output().is_ok() {
+            let is_lua = is_hyprland_lua();
+            let overlay_cmd = if is_lua {
+                format!(
+                    "hl.dsp.exec_cmd(\"{} {} {}\", {{ float = true, move = {{ {}, {} }}, size = {{ {}, {} }} }})",
+                    overlay_path.to_string_lossy(),
+                    ow_sel, oh_sel,
+                    ox_sel, oy_sel,
+                    ow_sel, oh_sel
+                )
+            } else {
+                format!(
+                    "exec [move {} {}; size {} {}] env XDG_SESSION_TYPE=wayland WAYLAND_DISPLAY={} {} {} {}",
+                    ox_sel, oy_sel, ow_sel, oh_sel,
+                    std::env::var("WAYLAND_DISPLAY").unwrap_or_else(|_| "wayland-0".to_string()),
+                    overlay_path.to_string_lossy(),
+                    ow_sel, oh_sel
+                )
+            };
 
-        if debug {
-            eprintln!("Spawning C overlay command: {}", overlay_cmd);
+            if debug {
+                eprintln!("Spawning C overlay (is_lua={}): {}", is_lua, overlay_cmd);
+            }
+
+            let status = Command::new("hyprctl")
+                .arg("dispatch")
+                .arg(&overlay_cmd)
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status();
+            if let Ok(s) = status {
+                if s.success() {
+                    spawned = true;
+                }
+            }
         }
 
-        let _ = Command::new("hyprctl")
-            .arg("dispatch")
-            .arg("exec")
-            .arg(&overlay_cmd)
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status();
+        if !spawned {
+            if debug {
+                eprintln!("hyprctl dispatch failed, falling back to direct overlay spawn");
+            }
+            let _ = Command::new(&overlay_path)
+                .arg(ow_sel.to_string())
+                .arg(oh_sel.to_string())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn();
+        }
 
         let overlay_pid = 0; // We will clean it up via pkill shot-overlay
 
@@ -255,4 +285,24 @@ pub fn handle_longshot(args: &Args, config: &config::Config) -> Result<()> {
 
         Ok(())
     }
+}
+
+fn is_hyprland_lua() -> bool {
+    if let Ok(output) = Command::new("hyprctl").arg("version").output() {
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        if let Some(idx) = stdout.find("Hyprland ") {
+            let version_part = &stdout[idx + 9..];
+            let mut parts = version_part.split('.');
+            if let Some(major) = parts.next() {
+                if let Some(minor_str) = parts.next() {
+                    if let Ok(minor) = minor_str.parse::<u32>() {
+                        if major == "0" && minor >= 55 {
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    false
 }

@@ -91,19 +91,7 @@ fn set_config_value(config: &mut config::Config, key: &str, value: &str) -> Resu
             config.paths.screenshots_dir = value.to_string();
         }
 
-        // [hotkeys] section
-        ("hotkeys", "window") => {
-            config.hotkeys.window = value.to_string();
-        }
-        ("hotkeys", "region") => {
-            config.hotkeys.region = value.to_string();
-        }
-        ("hotkeys", "output") => {
-            config.hotkeys.output = value.to_string();
-        }
-        ("hotkeys", "active_output") => {
-            config.hotkeys.active_output = value.to_string();
-        }
+
 
         // [capture] section
         ("capture", "notification") => {
@@ -160,11 +148,6 @@ fn set_config_value(config: &mut config::Config, key: &str, value: &str) -> Resu
                 "Unknown config key: {}.{}\n\nAvailable keys:\n\
                  Paths:\n\
                    - paths.screenshots_dir\n\
-                 Hotkeys:\n\
-                   - hotkeys.window\n\
-                   - hotkeys.region\n\
-                   - hotkeys.output\n\
-                   - hotkeys.active_output\n\
                  Capture:\n\
                    - capture.notification (true, false)\n\
                    - capture.notification_timeout (milliseconds)\n\

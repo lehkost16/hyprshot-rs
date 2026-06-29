@@ -8,7 +8,7 @@ mod config;
 mod config_cmds;
 mod freeze;
 mod geometry;
-mod hyprland_cmds;
+
 mod save;
 mod selector;
 mod utils;

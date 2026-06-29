@@ -34,6 +34,8 @@ pub fn run(mut args: Args) -> Result<()> {
         return handle_set_config(set_args);
     }
 
+
+
     // If overlay subcommand, run it directly without loading config or other logic
     if let Some(Subcommands::Overlay { x, y, w, h, scale, monitor, ox, oy }) = &args.subcommand {
         return longshot::overlay::run_overlay(*x, *y, *w, *h, *scale, monitor, *ox, *oy);

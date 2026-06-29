@@ -58,17 +58,7 @@ pub struct Args {
     )]
     pub set: Option<Vec<String>>,
 
-    #[arg(long, help = "Generate Hyprland keybindings")]
-    pub generate_hyprland_config: bool,
 
-    #[arg(long, help = "Install keybindings to hyprland.conf (creates backup)")]
-    pub install_binds: bool,
-
-    #[arg(long, help = "Include clipboard-only bindings when generating")]
-    pub with_clipboard: bool,
-
-    #[arg(long, help = "Interactive hotkeys setup wizard")]
-    pub setup_hotkeys: bool,
 
     #[arg(
         long,

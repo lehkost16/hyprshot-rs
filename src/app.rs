@@ -36,10 +36,9 @@ pub fn run(mut args: Args) -> Result<()> {
 
 
 
-    // If overlay subcommand, it is deprecated since we now run the C binary shot-overlay directly
-    if let Some(Subcommands::Overlay { .. }) = &args.subcommand {
-        eprintln!("Overlay is now managed directly by the C binary shot-overlay.");
-        return Ok(());
+    // If overlay subcommand, run it directly without loading config or other logic
+    if let Some(Subcommands::Overlay { x, y, w, h, scale, monitor, ox, oy }) = &args.subcommand {
+        return longshot::overlay::run_overlay(*x, *y, *w, *h, *scale, monitor, *ox, *oy);
     }
 
     // Load config

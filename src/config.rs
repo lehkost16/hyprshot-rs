@@ -136,7 +136,7 @@ fn default_save_file() -> bool {
 }
 
 fn default_longshot_fps() -> u32 {
-    15
+    30
 }
 
 fn default_longshot_match_threshold() -> f32 {
@@ -144,7 +144,7 @@ fn default_longshot_match_threshold() -> f32 {
 }
 
 fn default_longshot_min_movement() -> i32 {
-    5
+    2
 }
 
 fn default_longshot_static_threshold() -> f32 {

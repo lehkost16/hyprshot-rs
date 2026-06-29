@@ -178,11 +178,12 @@ pub fn stitch_video(
     }
 
     // 2. Spawn ffmpeg process to dump frames
+    let fps_filter = format!("fps={}", config.longshot.fps);
     let mut ffmpeg = Command::new("ffmpeg")
         .arg("-i")
         .arg(video_path)
         .arg("-vf")
-        .arg("fps=10")
+        .arg(&fps_filter)
         .arg("-f")
         .arg("rawvideo")
         .arg("-pix_fmt")

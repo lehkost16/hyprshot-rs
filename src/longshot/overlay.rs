@@ -342,10 +342,10 @@ pub fn run_overlay(
     event_queue.roundtrip(&mut state).context("Failed to configure overlay surface")?;
 
     // Logical dimensions configured by compositor
-    let w_logical = state.configured_w.map(|w| w as i32)
+    let w_logical = state.configured_w.filter(|&w| w > 0).map(|w| w as i32)
         .or_else(|| mode_width.map(|w| w / scale_int))
         .unwrap_or(1920);
-    let h_logical = state.configured_h.map(|h| h as i32)
+    let h_logical = state.configured_h.filter(|&h| h > 0).map(|h| h as i32)
         .or_else(|| mode_height.map(|h| h / scale_int))
         .unwrap_or(1080);
 

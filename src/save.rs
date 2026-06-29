@@ -8,10 +8,7 @@ use std::time::Duration;
 use crate::geometry::Geometry;
 use crate::utils::wait_with_timeout;
 
-#[cfg(feature = "grim")]
-pub(crate) fn to_grim_box(geometry: &Geometry) -> grim_rs::Box {
-    (*geometry).to_grim_box()
-}
+
 
 #[cfg(feature = "grim")]
 #[allow(clippy::too_many_arguments)]
@@ -28,24 +25,10 @@ pub fn save_geometry_with_grim(
     use std::io::Write;
 
     if debug {
-        eprintln!("Saving geometry with grim-rs library: {}", geometry);
+        eprintln!("Saving geometry with grim CLI: {}", geometry);
     }
 
-    let region = to_grim_box(geometry);
-
-    let mut grim = grim_rs::Grim::new().context("Failed to initialize grim-rs")?;
-
-    let capture_result = grim
-        .capture_region(region)
-        .context("Failed to capture screenshot region")?;
-
-    let png_bytes = grim
-        .to_png(
-            capture_result.data(),
-            capture_result.width(),
-            capture_result.height(),
-        )
-        .context("Failed to encode screenshot as PNG")?;
+    let png_bytes = crate::utils::capture_region_with_grim_cli(geometry)?;
 
     if raw {
         std::io::stdout().write_all(&png_bytes)?;

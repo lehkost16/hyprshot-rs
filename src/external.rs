@@ -127,15 +127,8 @@ pub fn run_external_screenshot_tool(
         std::thread::sleep(std::time::Duration::from_millis(150));
     }
 
-    // 3. Capture region using grim-rs to PNG bytes
-    let mut grim = grim_rs::Grim::new().context("Failed to initialize grim-rs")?;
-    let region = geometry.to_grim_box();
-    let capture_result = grim.capture_region(region).context("Failed to capture screenshot region")?;
-    let png_bytes = grim.to_png(
-        capture_result.data(),
-        capture_result.width(),
-        capture_result.height(),
-    ).context("Failed to encode screenshot as PNG")?;
+    // 3. Capture region using grim CLI to PNG bytes
+    let png_bytes = crate::utils::capture_region_with_grim_cli(&geometry)?;
 
     // 4. Save PNG to a unique temp file in /tmp/
     let mut temp_file = Builder::new()

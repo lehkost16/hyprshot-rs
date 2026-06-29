@@ -351,3 +351,20 @@ pub fn output_with_timeout(mut cmd: Command, timeout: Duration) -> Result<Output
         stderr,
     })
 }
+
+pub fn capture_region_with_grim_cli(geometry: &Geometry) -> Result<Vec<u8>> {
+    let geom_str = format!("{},{} {}x{}", geometry.x, geometry.y, geometry.width, geometry.height);
+    let output = Command::new("grim")
+        .arg("-g")
+        .arg(&geom_str)
+        .arg("-")
+        .output()
+        .context("Failed to execute grim command line tool")?;
+
+    if !output.status.success() {
+        let err_msg = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("grim failed: {}", err_msg);
+    }
+
+    Ok(output.stdout)
+}

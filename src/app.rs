@@ -82,7 +82,7 @@ pub fn run(mut args: Args) -> Result<()> {
         }
         Subcommands::Now | Subcommands::Win | Subcommands::Area | Subcommands::In5 | Subcommands::In10 => {
             let debug = args.debug;
-            let clipboard_only = args.clipboard_only;
+            let clipboard_only = args.clipboard_only || !config.capture.save_file;
             let raw = args.raw;
             
             // Handle countdown / delay

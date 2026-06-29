@@ -20,6 +20,8 @@ pub struct Config {
     pub satty: SattyConfig,
     #[serde(default)]
     pub ocr: OcrConfig,
+    #[serde(default)]
+    pub longshot: LongshotConfig,
 }
 
 /// Configuration for paths
@@ -67,6 +69,11 @@ pub struct CaptureConfig {
     /// Default: 3000
     #[serde(default = "default_notification_timeout")]
     pub notification_timeout: u32,
+
+    /// Whether to save screenshots to disk by default
+    /// Default: true
+    #[serde(default = "default_save_file")]
+    pub save_file: bool,
 }
 
 /// Advanced configuration options
@@ -97,6 +104,30 @@ pub struct OcrConfig {
     /// Command to perform OCR on screenshot
     #[serde(default = "default_ocr_command")]
     pub command: String,
+}
+
+/// Configuration for longshot (scrolling screenshot) settings
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct LongshotConfig {
+    /// Frame rate for recording longshot
+    /// Default: 15
+    #[serde(default = "default_longshot_fps")]
+    pub fps: u32,
+
+    /// Match threshold for image stitching (0.0 to 1.0)
+    /// Default: 0.8
+    #[serde(default = "default_longshot_match_threshold")]
+    pub match_threshold: f32,
+
+    /// Minimum movement in pixels to consider as new scrolled content
+    /// Default: 5
+    #[serde(default = "default_longshot_min_movement")]
+    pub min_movement: i32,
+
+    /// L1 difference threshold to detect static frames
+    /// Default: 1.0
+    #[serde(default = "default_longshot_static_threshold")]
+    pub static_threshold: f32,
 }
 
 // Default value functions for serde
@@ -140,6 +171,26 @@ fn default_freeze() -> bool {
     true
 }
 
+fn default_save_file() -> bool {
+    true
+}
+
+fn default_longshot_fps() -> u32 {
+    15
+}
+
+fn default_longshot_match_threshold() -> f32 {
+    0.8
+}
+
+fn default_longshot_min_movement() -> i32 {
+    5
+}
+
+fn default_longshot_static_threshold() -> f32 {
+    1.0
+}
+
 impl Default for PathsConfig {
     fn default() -> Self {
         Self {
@@ -164,6 +215,18 @@ impl Default for CaptureConfig {
         Self {
             notification: default_notification(),
             notification_timeout: default_notification_timeout(),
+            save_file: default_save_file(),
+        }
+    }
+}
+
+impl Default for LongshotConfig {
+    fn default() -> Self {
+        Self {
+            fps: default_longshot_fps(),
+            match_threshold: default_longshot_match_threshold(),
+            min_movement: default_longshot_min_movement(),
+            static_threshold: default_longshot_static_threshold(),
         }
     }
 }
@@ -203,6 +266,7 @@ impl Default for Config {
             advanced: AdvancedConfig::default(),
             satty: SattyConfig::default(),
             ocr: OcrConfig::default(),
+            longshot: LongshotConfig::default(),
         }
     }
 }

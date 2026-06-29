@@ -115,6 +115,10 @@ fn set_config_value(config: &mut config::Config, key: &str, value: &str) -> Resu
                 .parse()
                 .context("Value must be a number (milliseconds)")?;
         }
+        ("capture", "save_file") => {
+            config.capture.save_file =
+                value.parse().context("Value must be 'true' or 'false'")?;
+        }
 
         // [advanced] section
         ("advanced", "freeze_on_region") => {
@@ -125,6 +129,30 @@ fn set_config_value(config: &mut config::Config, key: &str, value: &str) -> Resu
             config.advanced.delay_ms = value
                 .parse()
                 .context("Value must be a number (milliseconds)")?;
+        }
+
+        // [satty] section
+        ("satty", "command") => {
+            config.satty.command = value.to_string();
+        }
+
+        // [ocr] section
+        ("ocr", "command") => {
+            config.ocr.command = value.to_string();
+        }
+
+        // [longshot] section
+        ("longshot", "fps") => {
+            config.longshot.fps = value.parse().context("Value must be a positive integer")?;
+        }
+        ("longshot", "match_threshold") => {
+            config.longshot.match_threshold = value.parse().context("Value must be a float (e.g. 0.8)")?;
+        }
+        ("longshot", "min_movement") => {
+            config.longshot.min_movement = value.parse().context("Value must be an integer (e.g. 5)")?;
+        }
+        ("longshot", "static_threshold") => {
+            config.longshot.static_threshold = value.parse().context("Value must be a float (e.g. 1.0)")?;
         }
 
         _ => {
@@ -140,9 +168,19 @@ fn set_config_value(config: &mut config::Config, key: &str, value: &str) -> Resu
                  Capture:\n\
                    - capture.notification (true, false)\n\
                    - capture.notification_timeout (milliseconds)\n\
+                   - capture.save_file (true, false)\n\
                  Advanced:\n\
                    - advanced.freeze_on_region (true, false)\n\
-                   - advanced.delay_ms (milliseconds)",
+                   - advanced.delay_ms (milliseconds)\n\
+                 Satty:\n\
+                   - satty.command\n\
+                 OCR:\n\
+                   - ocr.command\n\
+                 Longshot:\n\
+                   - longshot.fps (integer)\n\
+                   - longshot.match_threshold (float)\n\
+                   - longshot.min_movement (integer)\n\
+                   - longshot.static_threshold (float)",
                 section,
                 field
             ));

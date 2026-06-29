@@ -87,6 +87,7 @@ pub fn handle_longshot(args: &Args, config: &config::Config) -> Result<()> {
             state.h,
             state.scale,
             debug,
+            config,
         );
 
         // Delete state file
@@ -171,11 +172,14 @@ pub fn handle_longshot(args: &Args, config: &config::Config) -> Result<()> {
         }
 
         // Spawn wf-recorder
+        let fps_arg = format!("fps={}", config.longshot.fps);
         let rec_child = Command::new("wf-recorder")
             .arg("-g")
             .arg(format!("{},{} {}x{}", geometry.x, geometry.y, geometry.width, geometry.height))
             .arg("-f")
             .arg(&video_path)
+            .arg("-F")
+            .arg(&fps_arg)
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()

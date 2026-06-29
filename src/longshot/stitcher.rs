@@ -11,9 +11,7 @@ const PADDING: i32 = 10;
 const BOTTOM_RATIO: f32 = 0.15;
 const MID_START_RATIO: f32 = 0.40;
 const MID_END_RATIO: f32 = 0.60;
-const MATCH_THRESHOLD: f32 = 0.80;
-const MIN_MOVEMENT: i32 = 5;
-const STATIC_THRESH: f32 = 1.0;
+
 
 fn to_grayscale(rgb: &[u8], gray: &mut [u8]) {
     let num_pixels = rgb.len() / 3;
@@ -147,6 +145,7 @@ pub fn stitch_video(
     h_logical: i32,
     scale: f64,
     debug: bool,
+    config: &crate::config::Config,
 ) -> Result<()> {
     // 1. Get actual physical dimensions of the recorded video using ffprobe
     let (w_phys, h_phys) = get_video_dimensions(video_path)
@@ -244,7 +243,7 @@ pub fn stitch_video(
 
         // Check if frame is static compared to previous
         let diff = l1_diff(&curr_gray, &prev_gray);
-        if diff < STATIC_THRESH {
+        if diff < config.longshot.static_threshold {
             continue;
         }
 
@@ -262,7 +261,7 @@ pub fn stitch_video(
         );
 
         let bottom_movement = (h_cropped - bottom_th) - y_b;
-        if score_b > MATCH_THRESHOLD && bottom_movement as i32 > MIN_MOVEMENT {
+        if score_b > config.longshot.match_threshold && bottom_movement as i32 > config.longshot.min_movement {
             let split_row = y_b + bottom_th;
             if split_row < h_cropped {
                 let start_idx = split_row * w_cropped * 3;
@@ -287,7 +286,7 @@ pub fn stitch_video(
         );
 
         let mid_movement = mid_start as i32 - y_m as i32;
-        if score_m > MATCH_THRESHOLD && mid_movement > MIN_MOVEMENT {
+        if score_m > config.longshot.match_threshold && mid_movement > config.longshot.min_movement {
             let dy = mid_movement as usize;
             if dy < h_cropped {
                 let start_idx = (h_cropped - dy) * w_cropped * 3;

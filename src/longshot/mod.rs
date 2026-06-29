@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use std::{
-    fs::{self, File},
+    fs,
     io::Write,
     path::{Path, PathBuf},
     process::{Command, Stdio},
@@ -14,7 +14,6 @@ use crate::cli::Args;
 use crate::config;
 use crate::selector;
 
-pub mod overlay;
 pub mod stitcher;
 
 const STATE_FILE: &str = "/tmp/shot-longshot.json";
@@ -57,9 +56,15 @@ pub fn handle_longshot(args: &Args, config: &config::Config) -> Result<()> {
             .arg(state.pid.to_string())
             .status();
 
-        // Stop overlay process (SIGTERM)
-        let _ = Command::new("kill")
-            .arg(state.overlay_pid.to_string())
+        // Stop overlay process
+        if state.overlay_pid != 0 {
+            let _ = Command::new("kill")
+                .arg(state.overlay_pid.to_string())
+                .status();
+        }
+        let _ = Command::new("pkill")
+            .arg("-f")
+            .arg("shot-overlay")
             .status();
 
         // Wait for processes to exit
@@ -156,7 +161,7 @@ pub fn handle_longshot(args: &Args, config: &config::Config) -> Result<()> {
         let geometry = selector::select_region(debug)?;
 
         // Query active monitor name & scale factor
-        let (monitor, scale_f, ox, oy) = super::external::get_active_monitor_info(debug)
+        let (_monitor, scale_f, _ox, _oy) = super::external::get_active_monitor_info(debug)
             .unwrap_or(("eDP-1".to_string(), 1.0, 0, 0));
         let scale = scale_f;
 
@@ -186,26 +191,42 @@ pub fn handle_longshot(args: &Args, config: &config::Config) -> Result<()> {
             .context("Failed to spawn wf-recorder. Please ensure it is installed.")?;
         let rec_pid = rec_child.id();
 
-        // Spawn overlay
-        let log_file = std::fs::File::create("/tmp/shot_overlay.log").ok();
-        let stderr_cfg = log_file.map(Stdio::from).unwrap_or_else(|| Stdio::null());
-
+        // Spawn C-based overlay using hyprctl dispatch exec
         let exe_path = std::env::current_exe().context("Failed to get current executable path")?;
-        let overlay_child = Command::new(exe_path)
-            .arg("overlay")
-            .arg("--x").arg(geometry.x.to_string())
-            .arg("--y").arg(geometry.y.to_string())
-            .arg("--w").arg(geometry.width.to_string())
-            .arg("--h").arg(geometry.height.to_string())
-            .arg("--scale").arg(scale.to_string())
-            .arg("--monitor").arg(&monitor)
-            .arg("--ox").arg(ox.to_string())
-            .arg("--oy").arg(oy.to_string())
+        let overlay_path = exe_path.parent().unwrap().join("shot-overlay");
+        let overlay_path = if overlay_path.exists() {
+            overlay_path
+        } else {
+            PathBuf::from("shot-overlay")
+        };
+
+        let padding = 10;
+        let ox_sel = if geometry.x > padding { geometry.x - padding } else { 0 };
+        let oy_sel = if geometry.y > padding { geometry.y - padding } else { 0 };
+        let ow_sel = geometry.width + padding * 2;
+        let oh_sel = geometry.height + padding * 2;
+
+        let overlay_cmd = format!(
+            "[move {} {}; size {} {}] env XDG_SESSION_TYPE=wayland WAYLAND_DISPLAY={} {} {} {}",
+            ox_sel, oy_sel, ow_sel, oh_sel,
+            std::env::var("WAYLAND_DISPLAY").unwrap_or_else(|_| "wayland-0".to_string()),
+            overlay_path.to_string_lossy(),
+            ow_sel, oh_sel
+        );
+
+        if debug {
+            eprintln!("Spawning C overlay command: {}", overlay_cmd);
+        }
+
+        let _ = Command::new("hyprctl")
+            .arg("dispatch")
+            .arg("exec")
+            .arg(&overlay_cmd)
             .stdout(Stdio::null())
-            .stderr(stderr_cfg)
-            .spawn()
-            .context("Failed to spawn overlay process")?;
-        let overlay_pid = overlay_child.id();
+            .stderr(Stdio::null())
+            .status();
+
+        let overlay_pid = 0; // We will clean it up via pkill shot-overlay
 
         // Write state file
         let state = LongshotState {

@@ -68,16 +68,23 @@ fn match_template_vertical(
     }
     let var_t = sq_sum_t;
 
-    if var_t < 1e-5f32 {
+    // Reject extremely low contrast / blank templates (e.g. solid white backgrounds)
+    let std_dev = (var_t / n as f32).sqrt();
+    if std_dev < 3.5f32 {
         return (0.0, 0);
     }
 
     let mut best_penalized_score = -2.0f32;
     let mut best_actual_score = 0.0f32;
-    let mut best_y = 0;
+    let mut best_y = target_y;
 
-    // Search vertically from top to bottom
-    for y in 0..=(h - h_temp) {
+    // Restrict search range to reasonable downward scrolling movement
+    // dy = target_y - y in [0, max_scroll] -> y in [target_y - max_scroll, target_y]
+    let max_scroll = (h / 3).max(120).min(h - h_temp);
+    let y_start = target_y.saturating_sub(max_scroll);
+    let y_end = target_y;
+
+    for y in y_start..=y_end {
         let offset = y * w;
         let patch = &curr[offset..offset + n];
 
@@ -98,8 +105,13 @@ fn match_template_vertical(
 
         if sq_sum_p > 1e-5f32 {
             let score = (cov / (sq_sum_p * var_t).sqrt()) as f32;
-            let penalty = (y as f32 - target_y as f32).abs() * 1e-6f32;
+            
+            // Apply small distance penalty to favor smaller movements
+            // This acts as a tie-breaker on empty background regions
+            let movement = (target_y - y) as f32;
+            let penalty = movement * 1e-5f32;
             let penalized_score = score - penalty;
+
             if penalized_score > best_penalized_score {
                 best_penalized_score = penalized_score;
                 best_actual_score = score;

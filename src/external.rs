@@ -119,6 +119,14 @@ pub fn run_external_screenshot_tool(
         None
     };
 
+    // Stop freeze overlay immediately
+    if let Some(guard) = freeze_guard {
+        guard.stop()?;
+        std::thread::sleep(std::time::Duration::from_millis(150));
+    } else {
+        std::thread::sleep(std::time::Duration::from_millis(150));
+    }
+
     // 3. Capture region using grim-rs to PNG bytes
     let mut grim = grim_rs::Grim::new().context("Failed to initialize grim-rs")?;
     let region = geometry.to_grim_box();
@@ -128,11 +136,6 @@ pub fn run_external_screenshot_tool(
         capture_result.width(),
         capture_result.height(),
     ).context("Failed to encode screenshot as PNG")?;
-
-    // Stop freeze overlay immediately
-    if let Some(guard) = freeze_guard {
-        guard.stop()?;
-    }
 
     // 4. Save PNG to a unique temp file in /tmp/
     let mut temp_file = Builder::new()

@@ -149,6 +149,9 @@ pub fn run(mut args: Args) -> Result<()> {
 
             if let Some(guard) = freeze_guard {
                 guard.stop()?;
+                std::thread::sleep(std::time::Duration::from_millis(150));
+            } else {
+                std::thread::sleep(std::time::Duration::from_millis(150));
             }
 
             let save_dir = config::get_screenshots_dir(args.output_folder.clone(), &config, debug)?;

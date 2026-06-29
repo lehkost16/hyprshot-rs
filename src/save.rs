@@ -3,10 +3,8 @@ use notify_rust::Notification;
 use std::fs::{create_dir_all, write};
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
-use std::time::Duration;
 
 use crate::geometry::Geometry;
-use crate::utils::wait_with_timeout;
 
 
 
@@ -88,11 +86,7 @@ pub fn save_geometry_with_grim(
             .unwrap()
             .write_all(&png_bytes)
             .context("Failed to write to wl-copy stdin")?;
-        let wl_copy_status = wait_with_timeout(&mut wl_copy, Duration::from_secs(3))
-            .context("Failed to wait for wl-copy")?;
-        if !wl_copy_status.success() {
-            return Err(anyhow::anyhow!("wl-copy failed to copy screenshot"));
-        }
+        std::mem::drop(wl_copy);
     }
 
     if !silent {

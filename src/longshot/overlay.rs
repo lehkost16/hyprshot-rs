@@ -1,7 +1,6 @@
 use anyhow::{Context, Result};
 use std::{
     os::fd::{AsRawFd, BorrowedFd},
-    sync::mpsc,
     thread,
     time::Duration,
 };
@@ -17,6 +16,9 @@ use wayland_client::{
         wl_shm_pool::WlShmPool,
         wl_surface::WlSurface,
     },
+};
+use wayland_protocols::xdg::xdg_output::zv1::client::{
+    zxdg_output_manager_v1::ZxdgOutputManagerV1, zxdg_output_v1::ZxdgOutputV1,
 };
 use wayland_protocols_wlr::layer_shell::v1::client::{
     zwlr_layer_shell_v1::{Layer, ZwlrLayerShellV1},
@@ -34,9 +36,14 @@ struct SurfaceKey(usize);
 
 struct OutputEntry {
     output: WlOutput,
+    xdg_output: Option<ZxdgOutputV1>,
     name: Option<String>,
     pos_x: Option<i32>,
     pos_y: Option<i32>,
+    logical_x: Option<i32>,
+    logical_y: Option<i32>,
+    logical_width: Option<i32>,
+    logical_height: Option<i32>,
     scale: i32,
     mode_width: Option<i32>,
     mode_height: Option<i32>,
@@ -46,6 +53,7 @@ struct State {
     compositor: Option<WlCompositor>,
     shm: Option<WlShm>,
     layer_shell: Option<ZwlrLayerShellV1>,
+    xdg_output_manager: Option<ZxdgOutputManagerV1>,
     outputs: Vec<OutputEntry>,
     surface: Option<SurfaceEntry>,
     configured: bool,
@@ -86,6 +94,9 @@ impl Dispatch<WlRegistry, ()> for State {
                 "zwlr_layer_shell_v1" => {
                     state.layer_shell = Some(registry.bind(name, version.min(4), qh, ()));
                 }
+                "zxdg_output_manager_v1" => {
+                    state.xdg_output_manager = Some(registry.bind(name, version.min(3), qh, ()));
+                }
                 "wl_output" => {
                     let idx = state.outputs.len();
                     let output = registry.bind::<WlOutput, _, _>(
@@ -96,13 +107,58 @@ impl Dispatch<WlRegistry, ()> for State {
                     );
                     state.outputs.push(OutputEntry {
                         output,
+                        xdg_output: None,
                         name: None,
                         pos_x: None,
                         pos_y: None,
+                        logical_x: None,
+                        logical_y: None,
+                        logical_width: None,
+                        logical_height: None,
                         scale: 1,
                         mode_width: None,
                         mode_height: None,
                     });
+                }
+                _ => {}
+            }
+        }
+    }
+}
+
+impl Dispatch<ZxdgOutputManagerV1, ()> for State {
+    fn event(
+        _: &mut Self,
+        _: &ZxdgOutputManagerV1,
+        _: wayland_protocols::xdg::xdg_output::zv1::client::zxdg_output_manager_v1::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
+}
+
+impl Dispatch<ZxdgOutputV1, OutputKey> for State {
+    fn event(
+        state: &mut Self,
+        _: &ZxdgOutputV1,
+        event: wayland_protocols::xdg::xdg_output::zv1::client::zxdg_output_v1::Event,
+        data: &OutputKey,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        if let Some(entry) = state.outputs.get_mut(data.0) {
+            match event {
+                wayland_protocols::xdg::xdg_output::zv1::client::zxdg_output_v1::Event::LogicalPosition { x, y } => {
+                    entry.logical_x = Some(x);
+                    entry.logical_y = Some(y);
+                }
+                wayland_protocols::xdg::xdg_output::zv1::client::zxdg_output_v1::Event::LogicalSize { width, height } => {
+                    entry.logical_width = Some(width);
+                    entry.logical_height = Some(height);
+                }
+                wayland_protocols::xdg::xdg_output::zv1::client::zxdg_output_v1::Event::Name { name } => {
+                    entry.name = Some(name);
                 }
                 _ => {}
             }
@@ -197,6 +253,40 @@ impl Dispatch<ZwlrLayerShellV1, ()> for State {
     fn event(_: &mut Self, _: &ZwlrLayerShellV1, _: wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_shell_v1::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
 }
 
+fn output_logical_origin(output: &OutputEntry) -> Option<(i32, i32)> {
+    match (
+        output.logical_x.or(output.pos_x),
+        output.logical_y.or(output.pos_y),
+    ) {
+        (Some(x), Some(y)) => Some((x, y)),
+        _ => None,
+    }
+}
+
+fn output_logical_size(output: &OutputEntry) -> Option<(i32, i32)> {
+    if let (Some(width), Some(height)) = (output.logical_width, output.logical_height) {
+        return Some((width, height));
+    }
+
+    let mode_width = output.mode_width?;
+    let mode_height = output.mode_height?;
+    let scale = output.scale.max(1);
+    Some((
+        ((mode_width as f64) / (scale as f64)).round() as i32,
+        ((mode_height as f64) / (scale as f64)).round() as i32,
+    ))
+}
+
+fn contains_point(output: &OutputEntry, x: i32, y: i32) -> bool {
+    let Some((ox, oy)) = output_logical_origin(output) else {
+        return false;
+    };
+    let Some((ow, oh)) = output_logical_size(output) else {
+        return false;
+    };
+    x >= ox && x < ox + ow && y >= oy && y < oy + oh
+}
+
 fn draw_selection_border(
     mmap: &mut [u8],
     width: i32, // full screen buffer width
@@ -279,12 +369,13 @@ pub fn run_overlay(
     let mut event_queue = conn.new_event_queue();
     let qh = event_queue.handle();
 
-    let registry = conn.display().get_registry(&qh, ());
+    let _registry = conn.display().get_registry(&qh, ());
 
     let mut state = State {
         compositor: None,
         shm: None,
         layer_shell: None,
+        xdg_output_manager: None,
         outputs: Vec::new(),
         surface: None,
         configured: false,
@@ -293,7 +384,13 @@ pub fn run_overlay(
     };
 
     event_queue.roundtrip(&mut state).context("Failed to initialize Wayland globals")?;
-    
+
+    if let Some(manager) = state.xdg_output_manager.clone() {
+        for (idx, entry) in state.outputs.iter_mut().enumerate() {
+            entry.xdg_output = Some(manager.get_xdg_output(&entry.output, &qh, OutputKey(idx)));
+        }
+    }
+
     // Perform roundtrip again to ensure output metadata is received
     event_queue.roundtrip(&mut state).context("Failed to query output metadata")?;
 
@@ -301,22 +398,31 @@ pub fn run_overlay(
     let shm = state.shm.clone().context("wl_shm not available")?;
     let layer_shell = state.layer_shell.clone().context("zwlr_layer_shell_v1 not available")?;
 
-    // Find the matching output by name or fallback to first
-    let (output_wl, scale_int, mode_width, mode_height) = {
-        let output_entry = state.outputs.iter().find(|o| o.name.as_deref() == Some(monitor))
+    let center_x = x + w / 2;
+    let center_y = y + h / 2;
+
+    // Find the output containing the selected region. Falling back to the active
+    // monitor keeps compatibility when output metadata is incomplete.
+    let (output_wl, output_origin_x, output_origin_y, scale_int, mode_width, mode_height) = {
+        let output_entry = state.outputs.iter().find(|o| contains_point(o, center_x, center_y))
+            .or_else(|| state.outputs.iter().find(|o| o.name.as_deref() == Some(monitor)))
             .or_else(|| state.outputs.first())
             .context("No outputs found")?;
+        let (origin_x, origin_y) = output_logical_origin(output_entry)
+            .unwrap_or((output_x, output_y));
         (
             output_entry.output.clone(),
+            origin_x,
+            origin_y,
             output_entry.scale.max(1),
             output_entry.mode_width,
             output_entry.mode_height,
         )
     };
 
-    // Calculate margins relative to output top-left using passed active monitor coordinates
-    let rx = x - output_x;
-    let ry = y - output_y;
+    // Calculate margins relative to the selected output top-left.
+    let rx = x - output_origin_x;
+    let ry = y - output_origin_y;
 
     // Create layer surface
     let surface = compositor.create_surface(&qh, ());

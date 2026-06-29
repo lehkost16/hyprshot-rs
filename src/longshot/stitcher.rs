@@ -53,6 +53,7 @@ fn match_template_vertical(
     w: usize,
     h: usize,
     h_temp: usize,
+    target_y: usize,
 ) -> (f32, usize) {
     let n = w * h_temp;
     
@@ -73,7 +74,8 @@ fn match_template_vertical(
         return (0.0, 0);
     }
 
-    let mut best_score = -1.0f32;
+    let mut best_penalized_score = -2.0f32;
+    let mut best_actual_score = 0.0f32;
     let mut best_y = 0;
 
     // Search vertically from top to bottom
@@ -98,14 +100,17 @@ fn match_template_vertical(
 
         if sq_sum_p > 1e-5f32 {
             let score = (cov / (sq_sum_p * var_t).sqrt()) as f32;
-            if score > best_score {
-                best_score = score;
+            let penalty = (y as f32 - target_y as f32).abs() * 1e-6f32;
+            let penalized_score = score - penalty;
+            if penalized_score > best_penalized_score {
+                best_penalized_score = penalized_score;
+                best_actual_score = score;
                 best_y = y;
             }
         }
     }
 
-    (best_score, best_y)
+    (best_actual_score, best_y)
 }
 
 fn get_video_dimensions(video_path: &Path) -> Result<(usize, usize)> {
@@ -253,6 +258,7 @@ pub fn stitch_video(
             sw,
             h_cropped,
             bottom_th,
+            h_cropped - bottom_th,
         );
 
         let bottom_movement = (h_cropped - bottom_th) - y_b;
@@ -277,6 +283,7 @@ pub fn stitch_video(
             sw,
             h_cropped,
             mid_h,
+            mid_start,
         );
 
         let mid_movement = mid_start as i32 - y_m as i32;

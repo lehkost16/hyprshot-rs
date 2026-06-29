@@ -183,6 +183,9 @@ pub fn handle_longshot(args: &Args, config: &config::Config) -> Result<()> {
         let rec_pid = rec_child.id();
 
         // Spawn overlay
+        let log_file = std::fs::File::create("/tmp/shot_overlay.log").ok();
+        let stderr_cfg = log_file.map(Stdio::from).unwrap_or_else(|| Stdio::null());
+
         let exe_path = std::env::current_exe().context("Failed to get current executable path")?;
         let overlay_child = Command::new(exe_path)
             .arg("overlay")
@@ -195,7 +198,7 @@ pub fn handle_longshot(args: &Args, config: &config::Config) -> Result<()> {
             .arg("--ox").arg(ox.to_string())
             .arg("--oy").arg(oy.to_string())
             .stdout(Stdio::null())
-            .stderr(Stdio::null())
+            .stderr(stderr_cfg)
             .spawn()
             .context("Failed to spawn overlay process")?;
         let overlay_pid = overlay_child.id();

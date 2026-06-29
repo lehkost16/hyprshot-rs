@@ -98,10 +98,15 @@ pub fn save_geometry_with_grim(
                 save_fullpath.display()
             )
         };
+        let icon_name = if clipboard_only {
+            "edit-paste".to_string()
+        } else {
+            save_fullpath.to_str().unwrap_or("screenshot").to_string()
+        };
         if let Err(err) = Notification::new()
             .summary("Screenshot saved")
             .body(&message)
-            .icon(save_fullpath.to_str().unwrap_or("screenshot"))
+            .icon(&icon_name)
             .timeout(notif_timeout as i32)
             .appname("Hyprshot-rs")
             .show()

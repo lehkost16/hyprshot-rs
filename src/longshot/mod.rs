@@ -1,14 +1,14 @@
 use anyhow::{Context, Result};
+use chrono::Local;
+use notify_rust::Notification;
+use serde::{Deserialize, Serialize};
 use std::{
-    fs::{self, File},
+    fs,
     io::Write,
-    path::{Path, PathBuf},
+    path::Path,
     process::{Command, Stdio},
     time::Duration,
 };
-use serde::{Deserialize, Serialize};
-use notify_rust::Notification;
-use chrono::Local;
 
 use crate::cli::Args;
 use crate::config;
@@ -37,15 +37,17 @@ fn is_process_running(pid: u32) -> bool {
 pub fn handle_longshot(args: &Args, config: &config::Config) -> Result<()> {
     let debug = args.debug;
     let silent = args.silent;
-    let notif_timeout = args.notif_timeout.unwrap_or(config.capture.notification_timeout);
+    let notif_timeout = args
+        .notif_timeout
+        .unwrap_or(config.capture.notification_timeout);
 
     // Check if a longshot recording is already active
     if Path::new(STATE_FILE).exists() {
         // Read state
-        let state_data = fs::read_to_string(STATE_FILE)
-            .context("Failed to read longshot state file")?;
-        let state: LongshotState = serde_json::from_str(&state_data)
-            .context("Failed to parse longshot state JSON")?;
+        let state_data =
+            fs::read_to_string(STATE_FILE).context("Failed to read longshot state file")?;
+        let state: LongshotState =
+            serde_json::from_str(&state_data).context("Failed to parse longshot state JSON")?;
 
         if debug {
             eprintln!("Stopping longshot recording: {:?}", state);
@@ -97,7 +99,7 @@ pub fn handle_longshot(args: &Args, config: &config::Config) -> Result<()> {
             Ok(()) => {
                 // Copy to clipboard
                 if let Ok(png_bytes) = fs::read(&state.output_path) {
-                    let mut wl_copy_cmd = Command::new("wl-copy")
+                    let wl_copy_cmd = Command::new("wl-copy")
                         .arg("--type")
                         .arg("image/png")
                         .stdin(Stdio::piped())
@@ -123,9 +125,12 @@ pub fn handle_longshot(args: &Args, config: &config::Config) -> Result<()> {
 
                 // Clean up temp video file
                 let _ = fs::remove_file(&state.video_path);
-                
+
                 if debug {
-                    eprintln!("Longshot completed successfully. Stitched file: {}", state.output_path);
+                    eprintln!(
+                        "Longshot completed successfully. Stitched file: {}",
+                        state.output_path
+                    );
                 }
             }
             Err(err) => {
@@ -167,7 +172,10 @@ pub fn handle_longshot(args: &Args, config: &config::Config) -> Result<()> {
         if debug {
             eprintln!(
                 "Starting longshot recording. Video: {}, Output: {}, Region: {:?}, Scale: {}",
-                video_path, output_path.display(), geometry, scale
+                video_path,
+                output_path.display(),
+                geometry,
+                scale
             );
         }
 
@@ -175,12 +183,18 @@ pub fn handle_longshot(args: &Args, config: &config::Config) -> Result<()> {
         let fps_arg = format!("fps={}", config.longshot.fps);
         let rec_child = Command::new("wf-recorder")
             .arg("-g")
-            .arg(format!("{},{} {}x{}", geometry.x, geometry.y, geometry.width, geometry.height))
+            .arg(format!(
+                "{},{} {}x{}",
+                geometry.x, geometry.y, geometry.width, geometry.height
+            ))
             .arg("-f")
             .arg(&video_path)
-            .arg("-c").arg("libx264rgb")
-            .arg("-p").arg("preset=ultrafast")
-            .arg("-p").arg("crf=0")
+            .arg("-c")
+            .arg("libx264rgb")
+            .arg("-p")
+            .arg("preset=ultrafast")
+            .arg("-p")
+            .arg("crf=0")
             .arg("-F")
             .arg(&fps_arg)
             .stdout(Stdio::null())
@@ -196,14 +210,22 @@ pub fn handle_longshot(args: &Args, config: &config::Config) -> Result<()> {
         let exe_path = std::env::current_exe().context("Failed to get current executable path")?;
         let overlay_child = Command::new(exe_path)
             .arg("overlay")
-            .arg("--x").arg(geometry.x.to_string())
-            .arg("--y").arg(geometry.y.to_string())
-            .arg("--w").arg(geometry.width.to_string())
-            .arg("--h").arg(geometry.height.to_string())
-            .arg("--scale").arg(scale.to_string())
-            .arg("--monitor").arg(&monitor)
-            .arg("--ox").arg(ox.to_string())
-            .arg("--oy").arg(oy.to_string())
+            .arg("--x")
+            .arg(geometry.x.to_string())
+            .arg("--y")
+            .arg(geometry.y.to_string())
+            .arg("--w")
+            .arg(geometry.width.to_string())
+            .arg("--h")
+            .arg(geometry.height.to_string())
+            .arg("--scale")
+            .arg(scale.to_string())
+            .arg("--monitor")
+            .arg(&monitor)
+            .arg("--ox")
+            .arg(ox.to_string())
+            .arg("--oy")
+            .arg(oy.to_string())
             .stdout(Stdio::null())
             .stderr(stderr_cfg)
             .spawn()
@@ -220,10 +242,9 @@ pub fn handle_longshot(args: &Args, config: &config::Config) -> Result<()> {
             h: geometry.height,
             scale,
         };
-        let state_json = serde_json::to_string_pretty(&state)
-            .context("Failed to serialize state to JSON")?;
-        fs::write(STATE_FILE, state_json)
-            .context("Failed to write longshot state file")?;
+        let state_json =
+            serde_json::to_string_pretty(&state).context("Failed to serialize state to JSON")?;
+        fs::write(STATE_FILE, state_json).context("Failed to write longshot state file")?;
 
         // Send starting notification
         if !silent {

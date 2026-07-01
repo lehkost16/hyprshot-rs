@@ -4,6 +4,7 @@ use std::fmt;
 use crate::geometry::Geometry;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
 pub(crate) enum SelectionTarget {
     Output,
     Region,
@@ -58,6 +59,7 @@ fn selection_failed(target: SelectionTarget, message: impl Into<String>) -> anyh
     })
 }
 
+#[allow(dead_code)]
 pub fn select_output(debug: bool) -> Result<Geometry> {
     let selection = slurp_rs::select_output(slurp_rs::SelectOptions::default())
         .map_err(|err| map_api_error(err, SelectionTarget::Output))?;

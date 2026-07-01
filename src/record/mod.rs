@@ -1,14 +1,14 @@
 use anyhow::{Context, Result};
+use chrono::Local;
+use notify_rust::Notification;
+use serde::{Deserialize, Serialize};
 use std::{
-    fs::{self, File},
+    fs,
     io::Write,
-    path::{Path, PathBuf},
+    path::Path,
     process::{Command, Stdio},
     time::Duration,
 };
-use serde::{Deserialize, Serialize};
-use notify_rust::Notification;
-use chrono::Local;
 
 use crate::cli::Args;
 use crate::config;
@@ -30,15 +30,17 @@ fn is_process_running(pid: u32) -> bool {
 pub fn handle_record(args: &Args, config: &config::Config) -> Result<()> {
     let debug = args.debug;
     let silent = args.silent;
-    let notif_timeout = args.notif_timeout.unwrap_or(config.capture.notification_timeout);
+    let notif_timeout = args
+        .notif_timeout
+        .unwrap_or(config.capture.notification_timeout);
 
     // Check if recording is already active
     if Path::new(STATE_FILE).exists() {
         // Read state
-        let state_data = fs::read_to_string(STATE_FILE)
-            .context("Failed to read record state file")?;
-        let state: RecordState = serde_json::from_str(&state_data)
-            .context("Failed to parse record state JSON")?;
+        let state_data =
+            fs::read_to_string(STATE_FILE).context("Failed to read record state file")?;
+        let state: RecordState =
+            serde_json::from_str(&state_data).context("Failed to parse record state JSON")?;
 
         if debug {
             eprintln!("Stopping recording: {:?}", state);
@@ -66,9 +68,7 @@ pub fn handle_record(args: &Args, config: &config::Config) -> Result<()> {
         let _ = fs::remove_file(STATE_FILE);
 
         // Copy the output video path to clipboard
-        let mut wl_copy_cmd = Command::new("wl-copy")
-            .stdin(Stdio::piped())
-            .spawn();
+        let wl_copy_cmd = Command::new("wl-copy").stdin(Stdio::piped()).spawn();
         if let Ok(mut child) = wl_copy_cmd {
             if let Some(mut stdin) = child.stdin.take() {
                 let _ = stdin.write_all(state.video_path.as_bytes());
@@ -80,7 +80,10 @@ pub fn handle_record(args: &Args, config: &config::Config) -> Result<()> {
         if !silent {
             let _ = Notification::new()
                 .summary("🎥 录屏已完成")
-                .body(&format!("视频已保存至: {}\n路径已复制到剪贴板", state.video_path))
+                .body(&format!(
+                    "视频已保存至: {}\n路径已复制到剪贴板",
+                    state.video_path
+                ))
                 .timeout(notif_timeout as i32)
                 .appname("Shot")
                 .show();
@@ -95,7 +98,7 @@ pub fn handle_record(args: &Args, config: &config::Config) -> Result<()> {
         // Start recording
         let home_dir = dirs::home_dir().context("Failed to get home directory")?;
         let save_dir = home_dir.join("Videos").join("record");
-        
+
         // Ensure directory exists
         fs::create_dir_all(&save_dir).context("Failed to create Videos/record directory")?;
 
@@ -121,14 +124,19 @@ pub fn handle_record(args: &Args, config: &config::Config) -> Result<()> {
         // Spawn wf-recorder with standard recording parameters for WebM VP9
         let fps_arg = format!("fps={}", config.record.fps);
         let crf_arg = config.record.crf.to_string();
-        
+
         let rec_child = Command::new("wf-recorder")
             .arg("-g")
-            .arg(format!("{},{} {}x{}", geometry.x, geometry.y, geometry.width, geometry.height))
+            .arg(format!(
+                "{},{} {}x{}",
+                geometry.x, geometry.y, geometry.width, geometry.height
+            ))
             .arg("-f")
             .arg(&video_path_str)
-            .arg("-c").arg("libvpx-vp9")
-            .arg("-p").arg(format!("crf={}", crf_arg))
+            .arg("-c")
+            .arg("libvpx-vp9")
+            .arg("-p")
+            .arg(format!("crf={}", crf_arg))
             .arg("-F")
             .arg(&fps_arg)
             .stdout(Stdio::null())
@@ -144,14 +152,22 @@ pub fn handle_record(args: &Args, config: &config::Config) -> Result<()> {
         let exe_path = std::env::current_exe().context("Failed to get current executable path")?;
         let overlay_child = Command::new(exe_path)
             .arg("overlay")
-            .arg("--x").arg(geometry.x.to_string())
-            .arg("--y").arg(geometry.y.to_string())
-            .arg("--w").arg(geometry.width.to_string())
-            .arg("--h").arg(geometry.height.to_string())
-            .arg("--scale").arg(scale.to_string())
-            .arg("--monitor").arg(&monitor)
-            .arg("--ox").arg(ox.to_string())
-            .arg("--oy").arg(oy.to_string())
+            .arg("--x")
+            .arg(geometry.x.to_string())
+            .arg("--y")
+            .arg(geometry.y.to_string())
+            .arg("--w")
+            .arg(geometry.width.to_string())
+            .arg("--h")
+            .arg(geometry.height.to_string())
+            .arg("--scale")
+            .arg(scale.to_string())
+            .arg("--monitor")
+            .arg(&monitor)
+            .arg("--ox")
+            .arg(ox.to_string())
+            .arg("--oy")
+            .arg(oy.to_string())
             .stdout(Stdio::null())
             .stderr(stderr_cfg)
             .spawn()
@@ -164,10 +180,9 @@ pub fn handle_record(args: &Args, config: &config::Config) -> Result<()> {
             overlay_pid,
             video_path: video_path_str,
         };
-        let state_json = serde_json::to_string_pretty(&state)
-            .context("Failed to serialize state to JSON")?;
-        fs::write(STATE_FILE, state_json)
-            .context("Failed to write record state file")?;
+        let state_json =
+            serde_json::to_string_pretty(&state).context("Failed to serialize state to JSON")?;
+        fs::write(STATE_FILE, state_json).context("Failed to write record state file")?;
 
         // Send starting notification
         if !silent {

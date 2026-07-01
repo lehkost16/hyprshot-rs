@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use anyhow::{Context, Result};
 use serde_json::Value;
 use std::{collections::HashSet, process::Command, time::Duration};

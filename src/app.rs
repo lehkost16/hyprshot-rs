@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
 use chrono::Local;
 use notify_rust::Notification;
 use std::thread::sleep;
@@ -10,12 +10,12 @@ use crate::config;
 use crate::config_cmds::{
     handle_config_path, handle_init_config, handle_set_config, handle_show_config,
 };
-use crate::freeze;
-use crate::save;
-use crate::utils;
 use crate::external;
+use crate::freeze;
 use crate::longshot;
 use crate::record;
+use crate::save;
+use crate::utils;
 
 pub fn run(mut args: Args) -> Result<()> {
     // Handle config management commands first
@@ -35,10 +35,18 @@ pub fn run(mut args: Args) -> Result<()> {
         return handle_set_config(set_args);
     }
 
-
-
     // If overlay subcommand, run it directly without loading config or other logic
-    if let Some(Subcommands::Overlay { x, y, w, h, scale, monitor, ox, oy }) = &args.subcommand {
+    if let Some(Subcommands::Overlay {
+        x,
+        y,
+        w,
+        h,
+        scale,
+        monitor,
+        ox,
+        oy,
+    }) = &args.subcommand
+    {
         return longshot::overlay::run_overlay(*x, *y, *w, *h, *scale, monitor, *ox, *oy);
     }
 
@@ -86,11 +94,15 @@ pub fn run(mut args: Args) -> Result<()> {
         Subcommands::Record => {
             return record::handle_record(&args, &config);
         }
-        Subcommands::Now | Subcommands::Win | Subcommands::Area | Subcommands::In5 | Subcommands::In10 => {
+        Subcommands::Now
+        | Subcommands::Win
+        | Subcommands::Area
+        | Subcommands::In5
+        | Subcommands::In10 => {
             let debug = args.debug;
             let clipboard_only = args.clipboard_only || !config.capture.save_file;
             let raw = args.raw;
-            
+
             // Handle countdown / delay
             match subcommand {
                 Subcommands::In5 => {
@@ -108,13 +120,14 @@ pub fn run(mut args: Args) -> Result<()> {
             }
 
             let mut hyprctl_cache = capture::HyprctlCache::new();
-            
+
             // Start freeze overlay if region mode
             let is_region = matches!(subcommand, Subcommands::Area);
             let freeze = is_region && (args.freeze || config.advanced.freeze_on_region);
-            
-            let (_monitor_name, _, _, _) = external::get_active_monitor_info(debug).unwrap_or(("".to_string(), 1.0, 0, 0));
-            
+
+            let (_monitor_name, _, _, _) =
+                external::get_active_monitor_info(debug).unwrap_or(("".to_string(), 1.0, 0, 0));
+
             let freeze_guard = if freeze {
                 if debug {
                     eprintln!("Freeze requested: starting overlay thread");

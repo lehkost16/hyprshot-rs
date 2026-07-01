@@ -1,7 +1,6 @@
 use anyhow::{Context, Result};
 use std::{
     os::fd::{AsRawFd, BorrowedFd},
-    sync::mpsc,
     thread,
     time::Duration,
 };
@@ -30,6 +29,7 @@ const BORDER_THICK: i32 = 6;
 struct OutputKey(usize);
 
 #[derive(Debug)]
+#[allow(dead_code)]
 struct SurfaceKey(usize);
 
 struct OutputEntry {
@@ -55,6 +55,7 @@ struct State {
 
 struct SurfaceEntry {
     surface: WlSurface,
+    #[allow(dead_code)]
     layer_surface: ZwlrLayerSurfaceV1,
     buffer: WlBuffer,
     _tmp: tempfile::NamedTempFile,
@@ -88,12 +89,8 @@ impl Dispatch<WlRegistry, ()> for State {
                 }
                 "wl_output" => {
                     let idx = state.outputs.len();
-                    let output = registry.bind::<WlOutput, _, _>(
-                        name,
-                        version.min(4),
-                        qh,
-                        OutputKey(idx),
-                    );
+                    let output =
+                        registry.bind::<WlOutput, _, _>(name, version.min(4), qh, OutputKey(idx));
                     state.outputs.push(OutputEntry {
                         output,
                         name: None,
@@ -131,9 +128,16 @@ impl Dispatch<WlOutput, OutputKey> for State {
                 wayland_client::protocol::wl_output::Event::Name { name } => {
                     entry.name = Some(name);
                 }
-                wayland_client::protocol::wl_output::Event::Mode { flags, width, height, .. } => {
+                wayland_client::protocol::wl_output::Event::Mode {
+                    flags,
+                    width,
+                    height,
+                    ..
+                } => {
                     let is_current = match flags {
-                        wayland_client::WEnum::Value(f) => f.contains(wayland_client::protocol::wl_output::Mode::Current),
+                        wayland_client::WEnum::Value(f) => {
+                            f.contains(wayland_client::protocol::wl_output::Mode::Current)
+                        }
                         wayland_client::WEnum::Unknown(_) => false,
                     };
                     if is_current {
@@ -176,25 +180,81 @@ impl Dispatch<ZwlrLayerSurfaceV1, SurfaceKey> for State {
 }
 
 impl Dispatch<WlCompositor, ()> for State {
-    fn event(_: &mut Self, _: &WlCompositor, _: wayland_client::protocol::wl_compositor::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
+    fn event(
+        _: &mut Self,
+        _: &WlCompositor,
+        _: wayland_client::protocol::wl_compositor::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
 }
 impl Dispatch<WlShm, ()> for State {
-    fn event(_: &mut Self, _: &WlShm, _: wayland_client::protocol::wl_shm::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
+    fn event(
+        _: &mut Self,
+        _: &WlShm,
+        _: wayland_client::protocol::wl_shm::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
 }
 impl Dispatch<WlShmPool, ()> for State {
-    fn event(_: &mut Self, _: &WlShmPool, _: wayland_client::protocol::wl_shm_pool::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
+    fn event(
+        _: &mut Self,
+        _: &WlShmPool,
+        _: wayland_client::protocol::wl_shm_pool::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
 }
 impl Dispatch<WlSurface, ()> for State {
-    fn event(_: &mut Self, _: &WlSurface, _: wayland_client::protocol::wl_surface::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
+    fn event(
+        _: &mut Self,
+        _: &WlSurface,
+        _: wayland_client::protocol::wl_surface::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
 }
 impl Dispatch<WlBuffer, ()> for State {
-    fn event(_: &mut Self, _: &WlBuffer, _: wayland_client::protocol::wl_buffer::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
+    fn event(
+        _: &mut Self,
+        _: &WlBuffer,
+        _: wayland_client::protocol::wl_buffer::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
 }
 impl Dispatch<WlRegion, ()> for State {
-    fn event(_: &mut Self, _: &WlRegion, _: wayland_client::protocol::wl_region::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
+    fn event(
+        _: &mut Self,
+        _: &WlRegion,
+        _: wayland_client::protocol::wl_region::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
 }
 impl Dispatch<ZwlrLayerShellV1, ()> for State {
-    fn event(_: &mut Self, _: &ZwlrLayerShellV1, _: wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_shell_v1::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
+    fn event(
+        _: &mut Self,
+        _: &ZwlrLayerShellV1,
+        _: wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_shell_v1::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
 }
 
 fn draw_selection_border(
@@ -221,10 +281,10 @@ fn draw_selection_border(
     }
 
     // Ranges for the four border stripes
-    let top_range    = border_t..std::cmp::min(border_t + thick, border_b);
+    let top_range = border_t..std::cmp::min(border_t + thick, border_b);
     let bottom_range = std::cmp::max(border_b - thick, border_t)..border_b;
-    let left_range   = border_l..std::cmp::min(border_l + thick, border_r);
-    let right_range  = std::cmp::max(border_r - thick, border_l)..border_r;
+    let left_range = border_l..std::cmp::min(border_l + thick, border_r);
+    let right_range = std::cmp::max(border_r - thick, border_l)..border_r;
 
     // ARGB8888 (little-endian): bytes are [B, G, R, A]
     // We want opaque red: B=0, G=0, R=255, A=alpha (premultiplied)
@@ -234,9 +294,9 @@ fn draw_selection_border(
         for x in x_start..x_end {
             let off = ((y * width + x) * 4) as usize;
             if off + 3 < mmap.len() {
-                mmap[off]     = 0;     // B
-                mmap[off + 1] = 0;     // G
-                mmap[off + 2] = r;     // R
+                mmap[off] = 0; // B
+                mmap[off + 1] = 0; // G
+                mmap[off + 2] = r; // R
                 mmap[off + 3] = alpha; // A
             }
         }
@@ -274,7 +334,7 @@ pub fn run_overlay(
     let mut event_queue = conn.new_event_queue();
     let qh = event_queue.handle();
 
-    let registry = conn.display().get_registry(&qh, ());
+    let _registry = conn.display().get_registry(&qh, ());
 
     let mut state = State {
         compositor: None,
@@ -287,18 +347,31 @@ pub fn run_overlay(
         configured_h: None,
     };
 
-    event_queue.roundtrip(&mut state).context("Failed to initialize Wayland globals")?;
-    
-    // Perform roundtrip again to ensure output metadata is received
-    event_queue.roundtrip(&mut state).context("Failed to query output metadata")?;
+    event_queue
+        .roundtrip(&mut state)
+        .context("Failed to initialize Wayland globals")?;
 
-    let compositor = state.compositor.clone().context("wl_compositor not available")?;
+    // Perform roundtrip again to ensure output metadata is received
+    event_queue
+        .roundtrip(&mut state)
+        .context("Failed to query output metadata")?;
+
+    let compositor = state
+        .compositor
+        .clone()
+        .context("wl_compositor not available")?;
     let shm = state.shm.clone().context("wl_shm not available")?;
-    let layer_shell = state.layer_shell.clone().context("zwlr_layer_shell_v1 not available")?;
+    let layer_shell = state
+        .layer_shell
+        .clone()
+        .context("zwlr_layer_shell_v1 not available")?;
 
     // Find the matching output by name or fallback to first
     let (output_wl, scale_int, mode_width, mode_height) = {
-        let output_entry = state.outputs.iter().find(|o| o.name.as_deref() == Some(monitor))
+        let output_entry = state
+            .outputs
+            .iter()
+            .find(|o| o.name.as_deref() == Some(monitor))
             .or_else(|| state.outputs.first())
             .context("No outputs found")?;
         (
@@ -334,7 +407,9 @@ pub fn run_overlay(
     surface.set_input_region(Some(&input_region));
 
     surface.commit();
-    event_queue.roundtrip(&mut state).context("Failed to configure overlay surface")?;
+    event_queue
+        .roundtrip(&mut state)
+        .context("Failed to configure overlay surface")?;
 
     // The compositor configures the layer surface at logical pixel dimensions (e.g. 2048x1280).
     // The buffer MUST match these logical dimensions exactly — if we provide a larger buffer
@@ -343,24 +418,37 @@ pub fn run_overlay(
     //
     // Correct approach: use logical dimensions as buffer size, draw at logical coords.
     // The compositor handles upscaling to physical pixels internally (fractional scale).
-    let w_buf = state.configured_w.filter(|&w| w > 0).map(|w| w as i32)
+    let w_buf = state
+        .configured_w
+        .filter(|&w| w > 0)
+        .map(|w| w as i32)
         .or_else(|| mode_width.map(|mw| if scale_int > 0 { mw / scale_int } else { mw }))
         .unwrap_or(1920);
-    let h_buf = state.configured_h.filter(|&h| h > 0).map(|h| h as i32)
+    let h_buf = state
+        .configured_h
+        .filter(|&h| h > 0)
+        .map(|h| h as i32)
         .or_else(|| mode_height.map(|mh| if scale_int > 0 { mh / scale_int } else { mh }))
         .unwrap_or(1080);
 
-    let _ = std::fs::write("/tmp/overlay_debug.log", format!(
-        "buf={w_buf}x{h_buf} mode={:?}x{:?} scale_int={scale_int} rx={rx} ry={ry} w={w} h={h}\n",
-        mode_width, mode_height
-    ));
+    let _ = std::fs::write(
+        "/tmp/overlay_debug.log",
+        format!(
+            "buf={w_buf}x{h_buf} mode={:?}x{:?} scale_int={scale_int} rx={rx} ry={ry} w={w} h={h}\n",
+            mode_width, mode_height
+        ),
+    );
 
     let stride = w_buf * 4;
     let size = (stride * h_buf) as usize;
 
     // Create shm buffer at logical dimensions
-    let mut tmp_file = tempfile::NamedTempFile::new().context("Failed to create temporary file for shm")?;
-    tmp_file.as_file_mut().set_len(size as u64).context("Failed to resize shm file")?;
+    let mut tmp_file =
+        tempfile::NamedTempFile::new().context("Failed to create temporary file for shm")?;
+    tmp_file
+        .as_file_mut()
+        .set_len(size as u64)
+        .context("Failed to resize shm file")?;
     let mmap = unsafe { memmap2::MmapMut::map_mut(&tmp_file).context("Failed to map shm")? };
 
     let pool = shm.create_pool(
@@ -388,12 +476,18 @@ pub fn run_overlay(
     // before the first commit — avoids race between compositor read and our write
     draw_selection_border(
         &mut surface_entry.mmap,
-        w_buf, h_buf,
-        rx, ry, w, h,
+        w_buf,
+        h_buf,
+        rx,
+        ry,
+        w,
+        h,
         1.0,
         255,
     );
-    surface_entry.surface.attach(Some(&surface_entry.buffer), 0, 0);
+    surface_entry
+        .surface
+        .attach(Some(&surface_entry.buffer), 0, 0);
     surface_entry.surface.damage_buffer(0, 0, w_buf, h_buf);
     surface_entry.surface.commit();
     conn.flush().ok();
@@ -403,13 +497,18 @@ pub fn run_overlay(
     loop {
         let elapsed = start_time.elapsed().as_secs_f32();
         // Breathing alpha: 1.5 Hz oscillation between ~55 and ~255
-        let alpha = (((elapsed * 2.0 * std::f32::consts::PI * 1.5).sin() + 1.0) * 0.5 * 200.0 + 55.0) as u8;
+        let alpha =
+            (((elapsed * 2.0 * std::f32::consts::PI * 1.5).sin() + 1.0) * 0.5 * 200.0 + 55.0) as u8;
 
         let surface_entry = state.surface.as_mut().unwrap();
         draw_selection_border(
             &mut surface_entry.mmap,
-            w_buf, h_buf,
-            rx, ry, w, h,
+            w_buf,
+            h_buf,
+            rx,
+            ry,
+            w,
+            h,
             1.0,
             alpha,
         );

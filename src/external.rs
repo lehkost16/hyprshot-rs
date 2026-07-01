@@ -1,16 +1,15 @@
 use anyhow::{Context, Result};
-use std::process::{Command, Stdio};
-use std::io::Write;
-use tempfile::Builder;
 use notify_rust::Notification;
 use serde_json::Value;
+use std::io::Write;
+use std::process::{Command, Stdio};
 use std::time::Duration;
+use tempfile::Builder;
 
 use crate::cli::Args;
 use crate::config::Config;
-use crate::geometry::Geometry;
-use crate::selector;
 use crate::freeze;
+use crate::selector;
 use crate::utils::output_with_timeout;
 
 pub fn get_active_monitor_info(_debug: bool) -> Result<(String, f64, i32, i32)> {
@@ -35,7 +34,10 @@ pub fn get_active_monitor_info(_debug: bool) -> Result<(String, f64, i32, i32)> 
             ) {
                 if let Ok(monitors) = serde_json::from_slice::<Value>(&output_mon.stdout) {
                     if let Some(arr) = monitors.as_array() {
-                        if let Some(m) = arr.iter().find(|m| m["activeWorkspace"]["id"] == active_workspace["id"]) {
+                        if let Some(m) = arr
+                            .iter()
+                            .find(|m| m["activeWorkspace"]["id"] == active_workspace["id"])
+                        {
                             let name = m["name"].as_str().unwrap_or("").to_string();
                             let scale = m["scale"].as_f64().unwrap_or(1.0);
                             let x = m["x"].as_i64().unwrap_or(0) as i32;
@@ -47,7 +49,7 @@ pub fn get_active_monitor_info(_debug: bool) -> Result<(String, f64, i32, i32)> 
             }
         }
     }
-    
+
     // Try Sway
     if let Ok(output) = output_with_timeout(
         {
@@ -69,9 +71,13 @@ pub fn get_active_monitor_info(_debug: bool) -> Result<(String, f64, i32, i32)> 
                             },
                             IPC_TIMEOUT,
                         ) {
-                            if let Ok(outputs) = serde_json::from_slice::<Value>(&output_mon.stdout) {
+                            if let Ok(outputs) = serde_json::from_slice::<Value>(&output_mon.stdout)
+                            {
                                 if let Some(arr_mon) = outputs.as_array() {
-                                    if let Some(o) = arr_mon.iter().find(|o| o["name"].as_str() == Some(focused_output)) {
+                                    if let Some(o) = arr_mon
+                                        .iter()
+                                        .find(|o| o["name"].as_str() == Some(focused_output))
+                                    {
                                         let name = o["name"].as_str().unwrap_or("").to_string();
                                         let scale = o["scale"].as_f64().unwrap_or(1.0);
                                         let rect = &o["rect"];
@@ -87,18 +93,16 @@ pub fn get_active_monitor_info(_debug: bool) -> Result<(String, f64, i32, i32)> 
             }
         }
     }
-    
+
     Ok(("eDP-1".to_string(), 1.0, 0, 0))
 }
 
-pub fn run_external_screenshot_tool(
-    args: &Args,
-    config: &Config,
-    is_ocr: bool,
-) -> Result<()> {
+pub fn run_external_screenshot_tool(args: &Args, config: &Config, is_ocr: bool) -> Result<()> {
     let debug = args.debug;
     let silent = args.silent;
-    let notif_timeout = args.notif_timeout.unwrap_or(config.capture.notification_timeout);
+    let notif_timeout = args
+        .notif_timeout
+        .unwrap_or(config.capture.notification_timeout);
 
     // 1. Select region
     let geometry = selector::select_region(debug)?;
@@ -109,9 +113,10 @@ pub fn run_external_screenshot_tool(
     } else {
         config.advanced.freeze_on_region
     };
-    
-    let (monitor_name, scale, _, _) = get_active_monitor_info(debug).unwrap_or(("".to_string(), 1.0, 0, 0));
-    
+
+    let (monitor_name, scale, _, _) =
+        get_active_monitor_info(debug).unwrap_or(("".to_string(), 1.0, 0, 0));
+
     let freeze_guard = if freeze {
         let guard = freeze::start_freeze(None, debug)?;
         Some(guard)
@@ -136,8 +141,10 @@ pub fn run_external_screenshot_tool(
         .suffix(".png")
         .tempfile()
         .context("Failed to create temporary file for screenshot")?;
-        
-    temp_file.write_all(&png_bytes).context("Failed to write screenshot bytes to temporary file")?;
+
+    temp_file
+        .write_all(&png_bytes)
+        .context("Failed to write screenshot bytes to temporary file")?;
     let temp_path = temp_file.path().to_path_buf();
     let temp_path_str = temp_path.to_string_lossy().to_string();
 
@@ -197,7 +204,12 @@ pub fn run_external_screenshot_tool(
                 .stdin(Stdio::piped())
                 .spawn()
                 .context("Failed to start wl-copy")?;
-            wl_copy.stdin.as_mut().unwrap().write_all(cleaned_txt.as_bytes()).context("Failed to write to wl-copy")?;
+            wl_copy
+                .stdin
+                .as_mut()
+                .unwrap()
+                .write_all(cleaned_txt.as_bytes())
+                .context("Failed to write to wl-copy")?;
             let _ = wl_copy.wait();
 
             // Send notification
@@ -250,10 +262,16 @@ fn clean_ocr_text(input: &str) -> String {
             continue;
         }
         // Filter out status/model loading messages
-        if t.starts_with('ℹ') || t.starts_with('✓') || t.starts_with("CPU") || t.starts_with("The device") || t.starts_with('↓') || t.starts_with("No text") {
+        if t.starts_with('ℹ')
+            || t.starts_with('✓')
+            || t.starts_with("CPU")
+            || t.starts_with("The device")
+            || t.starts_with('↓')
+            || t.starts_with("No text")
+        {
             continue;
         }
-        
+
         // Remove [number] bracket info and percentages
         let mut cleaned = String::new();
         let mut chars = t.chars().peekable();
@@ -288,10 +306,10 @@ fn clean_ocr_text(input: &str) -> String {
                 cleaned.push(ch);
             }
         }
-        
+
         lines.push(cleaned.trim().to_string());
     }
-    
+
     let joined = lines.join(" ");
     joined.trim().to_string()
 }

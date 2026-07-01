@@ -3,16 +3,16 @@ use anyhow::{Context, Result};
 #[cfg(all(target_os = "linux", feature = "freeze"))]
 mod imp {
     use super::*;
+    use crate::utils::output_with_timeout;
     use grim_rs::Grim;
+    use serde_json::Value;
+    use std::process::Command;
     use std::{
         os::fd::{AsRawFd, BorrowedFd},
         sync::mpsc,
         thread,
         time::Duration,
     };
-    use serde_json::Value;
-    use std::process::Command;
-    use crate::utils::output_with_timeout;
     use wayland_client::{
         Connection, Dispatch, QueueHandle,
         protocol::{
@@ -185,11 +185,7 @@ mod imp {
             if debug {
                 eprintln!("Freeze: detected Hyprland session, attempting to spawn hyprpicker");
             }
-            match Command::new("hyprpicker")
-                .arg("-r")
-                .arg("-z")
-                .spawn()
-            {
+            match Command::new("hyprpicker").arg("-r").arg("-z").spawn() {
                 Ok(child) => {
                     if debug {
                         eprintln!("Freeze: successfully spawned hyprpicker -r -z");
@@ -202,7 +198,10 @@ mod imp {
                 }
                 Err(e) => {
                     if debug {
-                        eprintln!("Freeze: failed to spawn hyprpicker ({}). Falling back to native.", e);
+                        eprintln!(
+                            "Freeze: failed to spawn hyprpicker ({}). Falling back to native.",
+                            e
+                        );
                     }
                 }
             }
@@ -645,7 +644,12 @@ mod imp {
 
             // 2. Fallback to match by position and physical size
             if !matched {
-                if let (Some(pos_x), Some(pos_y), Some(mode_w), Some(mode_h)) = (entry.pos_x, entry.pos_y, entry.mode_width, entry.mode_height) {
+                if let (Some(pos_x), Some(pos_y), Some(mode_w), Some(mode_h)) = (
+                    entry.pos_x,
+                    entry.pos_y,
+                    entry.mode_width,
+                    entry.mode_height,
+                ) {
                     if let Some(info) = state.monitors_info.iter().find(|info| {
                         let phys_w = (info.logical_w as f64 * info.scale).round() as i32;
                         let phys_h = (info.logical_h as f64 * info.scale).round() as i32;
@@ -837,10 +841,14 @@ Check the support for this protocol on Hyprland/Sway/River/Wayfire."
             let output = &state.outputs[entry.output_idx];
             let capture = &captures[surface_idx];
 
-            let logical_w = entry.configured_w.map(|w| w as i32)
+            let logical_w = entry
+                .configured_w
+                .map(|w| w as i32)
                 .or_else(|| output.logical_width)
                 .unwrap_or(0);
-            let logical_h = entry.configured_h.map(|h| h as i32)
+            let logical_h = entry
+                .configured_h
+                .map(|h| h as i32)
                 .or_else(|| output.logical_height)
                 .unwrap_or(0);
 
@@ -852,7 +860,10 @@ Check the support for this protocol on Hyprland/Sway/River/Wayfire."
 
             // Calculate target physical size based on logical size and compositor scale
             let (target_w, target_h) = if logical_w > 0 && logical_h > 0 {
-                ((logical_w * buffer_scale) as u32, (logical_h * buffer_scale) as u32)
+                (
+                    (logical_w * buffer_scale) as u32,
+                    (logical_h * buffer_scale) as u32,
+                )
             } else {
                 (width, height)
             };
@@ -861,10 +872,19 @@ Check the support for this protocol on Hyprland/Sway/River/Wayfire."
                 if debug {
                     eprintln!(
                         "Resizing captured image for output {} from {}x{} to target buffer size {}x{} (scale={})",
-                        output.name.as_deref().unwrap_or(""), width, height, target_w, target_h, buffer_scale
+                        output.name.as_deref().unwrap_or(""),
+                        width,
+                        height,
+                        target_w,
+                        target_h,
+                        buffer_scale
                     );
                 }
-                if let Some(img_buf) = image::ImageBuffer::<image::Rgba<u8>, Vec<u8>>::from_raw(width, height, raw_data.clone()) {
+                if let Some(img_buf) = image::ImageBuffer::<image::Rgba<u8>, Vec<u8>>::from_raw(
+                    width,
+                    height,
+                    raw_data.clone(),
+                ) {
                     let resized = image::imageops::resize(
                         &img_buf,
                         target_w,
@@ -881,12 +901,13 @@ Check the support for this protocol on Hyprland/Sway/River/Wayfire."
                 height: target_h,
             };
 
-            let (buffer, tmp, mmap) = create_buffer(&shm, &qh, &capture_img).with_context(|| {
-                format!(
-                    "Failed to create buffer for output '{}'",
-                    output.name.as_deref().unwrap_or("")
-                )
-            })?;
+            let (buffer, tmp, mmap) =
+                create_buffer(&shm, &qh, &capture_img).with_context(|| {
+                    format!(
+                        "Failed to create buffer for output '{}'",
+                        output.name.as_deref().unwrap_or("")
+                    )
+                })?;
 
             if buffer_scale > 1 {
                 entry.surface.set_buffer_scale(buffer_scale);
@@ -1104,6 +1125,7 @@ Check the support for this protocol on Hyprland/Sway/River/Wayfire."
 }
 
 #[cfg(all(target_os = "linux", feature = "freeze"))]
+#[allow(unused_imports)]
 pub use imp::FreezeGuard;
 #[cfg(all(target_os = "linux", feature = "freeze"))]
 pub use imp::start_freeze;
@@ -1126,6 +1148,7 @@ mod imp_stub {
 }
 
 #[cfg(not(all(target_os = "linux", feature = "freeze")))]
+#[allow(unused_imports)]
 pub use imp_stub::FreezeGuard;
 #[cfg(not(all(target_os = "linux", feature = "freeze")))]
 pub use imp_stub::start_freeze;

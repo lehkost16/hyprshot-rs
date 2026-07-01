@@ -1,17 +1,13 @@
 use anyhow::{Context, Result};
+use image::{ImageBuffer, Rgb};
 use std::{
-    fs::File,
     io::{self, Read},
     path::Path,
     process::{Command, Stdio},
 };
-use image::{ImageBuffer, Rgb};
-
-const PADDING: i32 = 10;
 const BOTTOM_RATIO: f32 = 0.15;
 const MID_START_RATIO: f32 = 0.40;
 const MID_END_RATIO: f32 = 0.60;
-
 
 fn to_grayscale(rgb: &[u8], gray: &mut [u8]) {
     let num_pixels = rgb.len() / 3;
@@ -54,10 +50,10 @@ fn match_template_vertical(
     target_y: usize,
 ) -> (f32, usize) {
     let n = w * h_temp;
-    
+
     // Convert template to f32 once
     let temp_f32: Vec<f32> = temp.iter().map(|&x| x as f32).collect();
-    
+
     // Mean of template
     let sum_t: f32 = temp_f32.iter().sum();
     let mean_t = sum_t / n as f32;
@@ -105,7 +101,7 @@ fn match_template_vertical(
 
         if sq_sum_p > 1e-5f32 {
             let score = (cov / (sq_sum_p * var_t).sqrt()) as f32;
-            
+
             // Apply small distance penalty to favor smaller movements
             // This acts as a tie-breaker on empty background regions
             let movement = (target_y - y) as f32;
@@ -125,16 +121,23 @@ fn match_template_vertical(
 
 fn get_video_dimensions(video_path: &Path) -> Result<(usize, usize)> {
     let output = Command::new("ffprobe")
-        .arg("-v").arg("error")
-        .arg("-select_streams").arg("v:0")
-        .arg("-show_entries").arg("stream=width,height")
-        .arg("-of").arg("csv=p=0")
+        .arg("-v")
+        .arg("error")
+        .arg("-select_streams")
+        .arg("v:0")
+        .arg("-show_entries")
+        .arg("stream=width,height")
+        .arg("-of")
+        .arg("csv=p=0")
         .arg(video_path)
         .output()
         .context("Failed to run ffprobe to query video dimensions")?;
 
     if !output.status.success() {
-        anyhow::bail!("ffprobe failed: {}", String::from_utf8_lossy(&output.stderr));
+        anyhow::bail!(
+            "ffprobe failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
     }
 
     let stdout_str = String::from_utf8_lossy(&output.stdout);
@@ -144,8 +147,12 @@ fn get_video_dimensions(video_path: &Path) -> Result<(usize, usize)> {
         anyhow::bail!("Invalid ffprobe output: '{}'", trimmed);
     }
 
-    let width = parts[0].parse::<usize>().context("Failed to parse video width")?;
-    let height = parts[1].parse::<usize>().context("Failed to parse video height")?;
+    let width = parts[0]
+        .parse::<usize>()
+        .context("Failed to parse video width")?;
+    let height = parts[1]
+        .parse::<usize>()
+        .context("Failed to parse video height")?;
 
     Ok((width, height))
 }
@@ -206,7 +213,10 @@ pub fn stitch_video(
         .spawn()
         .context("Failed to spawn ffmpeg command")?;
 
-    let mut stdout = ffmpeg.stdout.take().context("Failed to open ffmpeg stdout")?;
+    let mut stdout = ffmpeg
+        .stdout
+        .take()
+        .context("Failed to open ffmpeg stdout")?;
 
     let raw_frame_size = w_phys * h_phys * 3;
     let mut raw_buf = vec![0u8; raw_frame_size];
@@ -236,7 +246,8 @@ pub fn stitch_video(
             let src_start = (src_y * w_phys + crop) * 3;
             let src_end = src_start + w_cropped * 3;
             let dst_start = y * w_cropped * 3;
-            curr_rgb[dst_start..dst_start + w_cropped * 3].copy_from_slice(&raw_buf[src_start..src_end]);
+            curr_rgb[dst_start..dst_start + w_cropped * 3]
+                .copy_from_slice(&raw_buf[src_start..src_end]);
         }
 
         let mut curr_gray = vec![0u8; w_cropped * h_cropped];
@@ -274,7 +285,9 @@ pub fn stitch_video(
         );
 
         let bottom_movement = (h_cropped - bottom_th) - y_b;
-        if score_b > config.longshot.match_threshold && bottom_movement as i32 > config.longshot.min_movement {
+        if score_b > config.longshot.match_threshold
+            && bottom_movement as i32 > config.longshot.min_movement
+        {
             let split_row = y_b + bottom_th;
             if split_row < h_cropped {
                 let start_idx = split_row * w_cropped * 3;
@@ -289,17 +302,12 @@ pub fn stitch_video(
         // Try Middle matching
         let temp_mid = &prev_stripe[mid_start * sw..mid_end * sw];
         let mid_h = mid_end - mid_start;
-        let (score_m, y_m) = match_template_vertical(
-            &curr_stripe,
-            temp_mid,
-            sw,
-            h_cropped,
-            mid_h,
-            mid_start,
-        );
+        let (score_m, y_m) =
+            match_template_vertical(&curr_stripe, temp_mid, sw, h_cropped, mid_h, mid_start);
 
         let mid_movement = mid_start as i32 - y_m as i32;
-        if score_m > config.longshot.match_threshold && mid_movement > config.longshot.min_movement {
+        if score_m > config.longshot.match_threshold && mid_movement > config.longshot.min_movement
+        {
             let dy = mid_movement as usize;
             if dy < h_cropped {
                 let start_idx = (h_cropped - dy) * w_cropped * 3;
@@ -330,9 +338,10 @@ pub fn stitch_video(
         ImageBuffer::from_raw(w_cropped as u32, total_h as u32, result_rgb)
             .context("Failed to construct final image buffer")?;
 
-    img_buffer
-        .save(output_path)
-        .context(format!("Failed to save stitched image to {}", output_path.display()))?;
+    img_buffer.save(output_path).context(format!(
+        "Failed to save stitched image to {}",
+        output_path.display()
+    ))?;
 
     Ok(())
 }

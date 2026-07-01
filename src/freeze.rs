@@ -35,54 +35,28 @@ mod imp {
         zwlr_layer_surface_v1::{Anchor, KeyboardInteractivity, ZwlrLayerSurfaceV1},
     };
 
-    pub enum FreezeGuardType {
-        Native {
-            stop_tx: mpsc::Sender<()>,
-            join: Option<thread::JoinHandle<Result<()>>>,
-        },
-        Hyprpicker {
-            child: std::process::Child,
-        },
-    }
-
     pub struct FreezeGuard {
-        pub guard: FreezeGuardType,
+        stop_tx: mpsc::Sender<()>,
+        join: Option<thread::JoinHandle<Result<()>>>,
     }
 
     impl FreezeGuard {
         pub fn stop(mut self) -> Result<()> {
-            match &mut self.guard {
-                FreezeGuardType::Native { stop_tx, join } => {
-                    let _ = stop_tx.send(());
-                    if let Some(j) = join.take() {
-                        return j
-                            .join()
-                            .unwrap_or_else(|_| Err(anyhow::anyhow!("Freeze thread panicked")));
-                    }
-                    Ok(())
-                }
-                FreezeGuardType::Hyprpicker { child } => {
-                    let _ = child.kill();
-                    let _ = child.wait();
-                    Ok(())
-                }
+            let _ = self.stop_tx.send(());
+            if let Some(j) = self.join.take() {
+                return j
+                    .join()
+                    .unwrap_or_else(|_| Err(anyhow::anyhow!("Freeze thread panicked")));
             }
+            Ok(())
         }
     }
 
     impl Drop for FreezeGuard {
         fn drop(&mut self) {
-            match &mut self.guard {
-                FreezeGuardType::Native { stop_tx, join } => {
-                    let _ = stop_tx.send(());
-                    if let Some(j) = join.take() {
-                        let _ = j.join();
-                    }
-                }
-                FreezeGuardType::Hyprpicker { child } => {
-                    let _ = child.kill();
-                    let _ = child.wait();
-                }
+            let _ = self.stop_tx.send(());
+            if let Some(j) = self.join.take() {
+                let _ = j.join();
             }
         }
     }
@@ -180,32 +154,7 @@ mod imp {
     }
 
     pub fn start_freeze(selected_output: Option<&str>, debug: bool) -> Result<FreezeGuard> {
-        // If on Hyprland, try to use hyprpicker -r -z as it natively supports Hyprland's internal scaling/oversampling layout
-        if std::env::var("HYPRLAND_INSTANCE_SIGNATURE").is_ok() {
-            if debug {
-                eprintln!("Freeze: detected Hyprland session, attempting to spawn hyprpicker");
-            }
-            match Command::new("hyprpicker").arg("-r").arg("-z").spawn() {
-                Ok(child) => {
-                    if debug {
-                        eprintln!("Freeze: successfully spawned hyprpicker -r -z");
-                    }
-                    // Wait a short duration for the overlay to map
-                    thread::sleep(Duration::from_millis(200));
-                    return Ok(FreezeGuard {
-                        guard: FreezeGuardType::Hyprpicker { child },
-                    });
-                }
-                Err(e) => {
-                    if debug {
-                        eprintln!(
-                            "Freeze: failed to spawn hyprpicker ({}). Falling back to native.",
-                            e
-                        );
-                    }
-                }
-            }
-        }
+        // Force native Rust freeze implementation. hyprpicker -r -z has issues with status bar offsets and fractional scaling shifts.
 
         let (stop_tx, stop_rx) = mpsc::channel();
         let (ready_tx, ready_rx) = mpsc::channel();
@@ -221,9 +170,7 @@ mod imp {
                 if debug {
                     eprintln!("Freeze overlay initialized");
                 }
-                Ok(FreezeGuard {
-                    guard: FreezeGuardType::Native { stop_tx, join },
-                })
+                Ok(FreezeGuard { stop_tx, join })
             }
             Ok(Err(err)) => {
                 eprintln!("Freeze disabled: {}", err);
@@ -231,10 +178,8 @@ mod imp {
                     let _ = join.join();
                 }
                 Ok(FreezeGuard {
-                    guard: FreezeGuardType::Native {
-                        stop_tx,
-                        join: None,
-                    },
+                    stop_tx,
+                    join: None,
                 })
             }
             Err(mpsc::RecvTimeoutError::Timeout) => {

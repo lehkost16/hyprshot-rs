@@ -58,8 +58,6 @@ pub struct Args {
     )]
     pub set: Option<Vec<String>>,
 
-
-
     #[arg(
         long,
         help = "Don't load configuration file (use defaults and CLI args only)"
@@ -141,9 +139,17 @@ pub fn resolve_delay(args: &Args, config: &config::Config) -> Duration {
 }
 
 pub fn default_filename(now: DateTime<Local>) -> String {
+    let config = crate::config::Config::load().unwrap_or_default();
+    let ext = match config.capture.file_type.as_str() {
+        "jpeg" => "jpeg",
+        "jpg" => "jpg",
+        "ppm" => "ppm",
+        _ => "png",
+    };
     format!(
-        "{}-{:03}_shot.png",
+        "{}-{:03}_shot.{}",
         now.format("%Y-%m-%d-%H%M%S"),
-        now.timestamp_subsec_millis()
+        now.timestamp_subsec_millis(),
+        ext
     )
 }

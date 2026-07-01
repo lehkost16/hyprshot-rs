@@ -50,6 +50,21 @@ pub struct CaptureConfig {
     /// Default: true
     #[serde(default = "default_save_file")]
     pub save_file: bool,
+
+    /// Output file type: "png", "jpeg", or "ppm"
+    /// Default: "png"
+    #[serde(default = "default_file_type")]
+    pub file_type: String,
+
+    /// JPEG quality (0-100)
+    /// Default: 100
+    #[serde(default = "default_jpeg_quality")]
+    pub jpeg_quality: u32,
+
+    /// PNG compression level (0-9)
+    /// Default: 6
+    #[serde(default = "default_png_level")]
+    pub png_level: u32,
 }
 
 /// Advanced configuration options
@@ -119,8 +134,6 @@ fn default_screenshots_dir() -> String {
     "~/Pictures".to_string()
 }
 
-
-
 fn default_notification() -> bool {
     true
 }
@@ -153,8 +166,24 @@ fn default_longshot_static_threshold() -> f32 {
     1.0
 }
 
-fn default_record_fps() -> u32 { 30 }
-fn default_record_crf() -> u32 { 32 }
+fn default_record_fps() -> u32 {
+    30
+}
+fn default_record_crf() -> u32 {
+    25
+}
+
+fn default_file_type() -> String {
+    "png".to_string()
+}
+
+fn default_jpeg_quality() -> u32 {
+    100
+}
+
+fn default_png_level() -> u32 {
+    6
+}
 
 /// Configuration for region screen recording
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -162,7 +191,7 @@ pub struct RecordConfig {
     /// Recording frame rate. Default: 30
     #[serde(default = "default_record_fps")]
     pub fps: u32,
-    /// libvpx-vp9 CRF quality (0=lossless, 63=worst). Default: 32
+    /// libvpx-vp9 CRF quality (0=lossless, 63=worst). Default: 25
     #[serde(default = "default_record_crf")]
     pub crf: u32,
 }
@@ -184,14 +213,15 @@ impl Default for PathsConfig {
     }
 }
 
-
-
 impl Default for CaptureConfig {
     fn default() -> Self {
         Self {
             notification: default_notification(),
             notification_timeout: default_notification_timeout(),
             save_file: default_save_file(),
+            file_type: default_file_type(),
+            jpeg_quality: default_jpeg_quality(),
+            png_level: default_png_level(),
         }
     }
 }
@@ -498,6 +528,10 @@ impl Config {
                 result.push_str("\n# Satty annotation tool settings\n");
             } else if line.starts_with("[ocr]") {
                 result.push_str("\n# OCR tool settings\n");
+            } else if line.starts_with("[longshot]") {
+                result.push_str("\n# Longshot (scrolling screenshot) settings\n");
+            } else if line.starts_with("[record]") {
+                result.push_str("\n# Screen recording settings\n");
             }
 
             result.push_str(line);
@@ -506,5 +540,4 @@ impl Config {
 
         result
     }
-
 }

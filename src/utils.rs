@@ -353,11 +353,19 @@ pub fn output_with_timeout(mut cmd: Command, timeout: Duration) -> Result<Output
 }
 
 pub fn capture_region_with_grim_cli(geometry: &Geometry) -> Result<Vec<u8>> {
-    let geom_str = format!("{},{} {}x{}", geometry.x, geometry.y, geometry.width, geometry.height);
-    let output = Command::new("grim")
-        .arg("-g")
-        .arg(&geom_str)
-        .arg("-")
+    let config = crate::config::Config::load().unwrap_or_default();
+    let geom_str = format!(
+        "{},{} {}x{}",
+        geometry.x, geometry.y, geometry.width, geometry.height
+    );
+    let mut cmd = Command::new("grim");
+    cmd.arg("-g").arg(&geom_str);
+    cmd.arg("-t").arg(&config.capture.file_type);
+    cmd.arg("-q").arg(config.capture.jpeg_quality.to_string());
+    cmd.arg("-l").arg(config.capture.png_level.to_string());
+    cmd.arg("-");
+
+    let output = cmd
         .output()
         .context("Failed to execute grim command line tool")?;
 

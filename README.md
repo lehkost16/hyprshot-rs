@@ -118,24 +118,84 @@ shot [options ..] <command>
 
 ## Configuration
 
-Initialize default config:
-```bash
-shot --init-config
-```
+The configuration file is located at `~/.config/hyprshot-rs/config.toml`. You can initialize a default configuration, display the current configuration, or edit values.
 
-View current configuration:
-```bash
-shot --show-config
-```
+### Commands
 
-Set configuration values:
-```bash
-shot --set paths.screenshots_dir ~/Pictures/Screenshots
-shot --set record.fps 60
-shot --set record.crf 30
-```
+- **Initialize default configuration**:
+  ```bash
+  shot --init-config
+  ```
 
-The configuration is saved in `~/.config/hyprshot-rs/config.toml`.
+- **Show current configuration**:
+  ```bash
+  shot --show-config
+  ```
+
+- **Set a configuration value**:
+  ```bash
+  shot --set <key> <value>
+  ```
+  Example:
+  ```bash
+  shot --set paths.screenshots_dir ~/Pictures/Screenshots
+  shot --set capture.jpeg_quality 95
+  shot --set record.fps 60
+  ```
+
+---
+
+### Configuration Reference
+
+Here is a complete list of all available configuration sections and options:
+
+#### `[paths]`
+* **`screenshots_dir`** (string) — Directory where screenshots will be saved.
+  * *Default:* `"~/Pictures"`
+
+#### `[capture]`
+* **`notification`** (boolean) — Show system notifications after screen capture.
+  * *Default:* `true`
+* **`notification_timeout`** (integer) — Notification display duration in milliseconds.
+  * *Default:* `3000`
+* **`save_file`** (boolean) — Whether to save screenshots to disk by default. If `false`, copies to clipboard only.
+  * *Default:* `true`
+* **`file_type`** (string) — Output format for screen captures. Options: `"png"`, `"jpeg"`, or `"ppm"`.
+  * *Default:* `"png"`
+* **`jpeg_quality`** (integer) — Quality of JPEG captures (from `0` to `100`).
+  * *Default:* `100` (max quality)
+* **`png_level`** (integer) — PNG zlib compression level (from `0` to `9`). Higher values take more CPU but yield smaller files.
+  * *Default:* `6`
+
+#### `[advanced]`
+* **`freeze_on_region`** (boolean) — Freeze the desktop screen during region selection.
+  * *Default:* `true`
+* **`delay_ms`** (integer) — Global delay before capturing in milliseconds.
+  * *Default:* `0`
+
+#### `[satty]`
+* **`command`** (string) — External command to execute for annotations when using `shot satty`. `{path}` is replaced with the screenshot path.
+  * *Default:* `"satty --filename {path}"`
+
+#### `[ocr]`
+* **`command`** (string) — External OCR execution command used when running `shot ocr`. `{path}` is replaced with the screenshot path.
+  * *Default:* `"nbocr recognize -l chinese -d v6-tiny {path} -f text -t 8"`
+
+#### `[longshot]`
+* **`fps`** (integer) — Frame rate for capturing scrolling screenshot feed.
+  * *Default:* `30`
+* **`match_threshold`** (float) — Match threshold for stitching vertical scrolled frames (range `0.0` to `1.0`).
+  * *Default:* `0.8`
+* **`min_movement`** (integer) — Minimum scrolled distance in pixels to trigger next stitch step.
+  * *Default:* `2`
+* **`static_threshold`** (float) — Difference threshold (L1 norm) to detect static frames and stop scroll capture.
+  * *Default:* `1.0`
+
+#### `[record]`
+* **`fps`** (integer) — Frame rate for screen recording.
+  * *Default:* `30`
+* **`crf`** (integer) — Constant Rate Factor (CRF) quality setting for WebM/VP9 video recording (range `0` to `63`). Lower values yield higher quality, `0` is lossless.
+  * *Default:* `25` (improved for higher quality, down from 32)
 
 ## License
 

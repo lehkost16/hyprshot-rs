@@ -59,17 +59,6 @@ fn selection_failed(target: SelectionTarget, message: impl Into<String>) -> anyh
     })
 }
 
-#[allow(dead_code)]
-pub fn select_output(debug: bool) -> Result<Geometry> {
-    let selection = slurp_rs::select_output(slurp_rs::SelectOptions::default())
-        .map_err(|err| map_api_error(err, SelectionTarget::Output))?;
-    let geometry = rect_to_geometry(&selection.rect)?;
-    if debug {
-        eprintln!("Output geometry: {}", geometry);
-    }
-    Ok(geometry)
-}
-
 pub fn select_region(debug: bool) -> Result<Geometry> {
     let options = slurp_rs::SelectOptions {
         display_dimensions: true,

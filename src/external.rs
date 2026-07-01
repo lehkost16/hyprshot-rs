@@ -132,9 +132,6 @@ pub fn run_external_screenshot_tool(args: &Args, config: &Config, is_ocr: bool) 
     let (monitor_name, scale, _, _) =
         get_active_monitor_info(debug).unwrap_or(("".to_string(), 1.0, 0, 0));
 
-    // 3. Capture region using grim CLI to PNG bytes
-    let png_bytes = crate::utils::capture_region_with_grim_cli(&geometry)?;
-
     // Stop freeze overlay
     if let Some(guard) = freeze_guard {
         guard.stop()?;
@@ -142,6 +139,9 @@ pub fn run_external_screenshot_tool(args: &Args, config: &Config, is_ocr: bool) 
     } else {
         std::thread::sleep(std::time::Duration::from_millis(150));
     }
+
+    // 3. Capture region using grim CLI to PNG bytes
+    let png_bytes = crate::utils::capture_region_with_grim_cli(&geometry)?;
 
     // 4. Save PNG to a unique temp file in /tmp/
     let mut temp_file = Builder::new()

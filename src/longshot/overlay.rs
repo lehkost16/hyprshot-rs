@@ -199,26 +199,26 @@ impl Dispatch<ZwlrLayerShellV1, ()> for State {
 
 fn draw_selection_border(
     mmap: &mut [u8],
-    width: i32, // full screen buffer width
-    height: i32, // full screen buffer height
-    rx: i32, // selection logical x relative to output
-    ry: i32, // selection logical y relative to output
-    rw: i32, // selection logical width
-    rh: i32, // selection logical height
-    scale: i32,
+    width: i32,  // buffer width in physical pixels
+    height: i32, // buffer height in physical pixels
+    rx: i32,     // selection x relative to output, in logical pixels
+    ry: i32,     // selection y relative to output, in logical pixels
+    rw: i32,     // selection width in logical pixels
+    rh: i32,     // selection height in logical pixels
+    true_scale: f64, // real fractional scale factor (e.g. 1.25)
     alpha: u8,
 ) {
     mmap.fill(0);
     let color = [0u8, 0u8, alpha, alpha];
     
-    let thick = BORDER_THICK * scale;
-    let padding = PADDING * scale;
+    let thick = ((BORDER_THICK as f64) * true_scale).round() as i32;
+    let padding = ((PADDING as f64) * true_scale).round() as i32;
     
-    // Physical coordinates with padding
-    let border_l = (rx * scale - padding).max(0);
-    let border_r = ((rx + rw) * scale + padding).min(width);
-    let border_t = (ry * scale - padding).max(0);
-    let border_b = ((ry + rh) * scale + padding).min(height);
+    // Convert logical coords to physical
+    let border_l = ((rx as f64 * true_scale) as i32 - padding).max(0);
+    let border_r = (((rx + rw) as f64 * true_scale) as i32 + padding).min(width);
+    let border_t = ((ry as f64 * true_scale) as i32 - padding).max(0);
+    let border_b = (((ry + rh) as f64 * true_scale) as i32 + padding).min(height);
     
     if border_l >= border_r || border_t >= border_b {
         return;
@@ -341,19 +341,30 @@ pub fn run_overlay(
     surface.commit();
     event_queue.roundtrip(&mut state).context("Failed to configure overlay surface")?;
 
-    // Logical dimensions configured by compositor
+    // Compute true fractional scale: physical / logical
+    // configured_w/h are the compositor's logical dimensions (e.g. 2048x1280)
+    // mode_width/height are the display physical pixels (e.g. 2560x1600)
+    // We use physical pixels directly as the SHM buffer — no set_buffer_scale needed.
     let w_logical = state.configured_w.filter(|&w| w > 0).map(|w| w as i32)
-        .or_else(|| mode_width.map(|w| w / scale_int))
+        .or_else(|| mode_width.map(|mw| mw * 100 / scale_int.max(1) / 100))
         .unwrap_or(1920);
     let h_logical = state.configured_h.filter(|&h| h > 0).map(|h| h as i32)
-        .or_else(|| mode_height.map(|h| h / scale_int))
+        .or_else(|| mode_height.map(|mh| mh * 100 / scale_int.max(1) / 100))
         .unwrap_or(1080);
 
-    // Buffer dimensions (physical)
-    let w_phys = w_logical * scale_int;
-    let h_phys = h_logical * scale_int;
+    // Physical buffer = actual display pixels
+    let w_phys = mode_width.unwrap_or(w_logical * scale_int);
+    let h_phys = mode_height.unwrap_or(h_logical * scale_int);
+
+    // True fractional scale factor for drawing
+    let true_scale = if w_logical > 0 { w_phys as f64 / w_logical as f64 } else { scale_int as f64 };
+
     let stride = w_phys * 4;
     let size = (stride * h_phys) as usize;
+
+    let _ = std::fs::write("/tmp/overlay_debug.log", format!(
+        "logical={w_logical}x{h_logical} phys={w_phys}x{h_phys} true_scale={true_scale:.4} rx={rx} ry={ry} w={w} h={h}\n"
+    ));
 
     // Create shm buffer
     let mut tmp_file = tempfile::NamedTempFile::new().context("Failed to create temporary file for shm")?;
@@ -366,12 +377,12 @@ pub fn run_overlay(
         &qh,
         (),
     );
+    // Buffer is physical pixels; set_buffer_scale(1) so compositor treats each pixel as 1 physical pixel
     let buffer = pool.create_buffer(0, w_phys, h_phys, stride, wl_shm::Format::Argb8888, &qh, ());
     pool.destroy();
 
-    if scale_int > 1 {
-        surface.set_buffer_scale(scale_int);
-    }
+    // Do NOT call set_buffer_scale — we handle scaling ourselves via true_scale
+    // surface.set_buffer_scale(1) is the default
 
     state.surface = Some(SurfaceEntry {
         surface,
@@ -403,7 +414,7 @@ pub fn run_overlay(
             ry,
             w,
             h,
-            scale_int,
+            true_scale,
             alpha,
         );
         

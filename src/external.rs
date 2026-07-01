@@ -104,18 +104,12 @@ pub fn run_external_screenshot_tool(args: &Args, config: &Config, is_ocr: bool) 
         .notif_timeout
         .unwrap_or(config.capture.notification_timeout);
 
-    // 1. Select region
-    let geometry = selector::select_region(debug)?;
-
-    // 2. Start freeze overlay if requested
+    // 1. Start freeze overlay if requested
     let freeze = if args.freeze {
         true
     } else {
         config.advanced.freeze_on_region
     };
-
-    let (monitor_name, scale, _, _) =
-        get_active_monitor_info(debug).unwrap_or(("".to_string(), 1.0, 0, 0));
 
     let freeze_guard = if freeze {
         let guard = freeze::start_freeze(None, debug)?;
@@ -124,16 +118,30 @@ pub fn run_external_screenshot_tool(args: &Args, config: &Config, is_ocr: bool) 
         None
     };
 
-    // Stop freeze overlay immediately
+    // 2. Select region
+    let geometry = match selector::select_region(debug) {
+        Ok(geom) => geom,
+        Err(err) => {
+            if let Some(guard) = freeze_guard {
+                let _ = guard.stop();
+            }
+            return Err(err);
+        }
+    };
+
+    let (monitor_name, scale, _, _) =
+        get_active_monitor_info(debug).unwrap_or(("".to_string(), 1.0, 0, 0));
+
+    // 3. Capture region using grim CLI to PNG bytes
+    let png_bytes = crate::utils::capture_region_with_grim_cli(&geometry)?;
+
+    // Stop freeze overlay
     if let Some(guard) = freeze_guard {
         guard.stop()?;
         std::thread::sleep(std::time::Duration::from_millis(150));
     } else {
         std::thread::sleep(std::time::Duration::from_millis(150));
     }
-
-    // 3. Capture region using grim CLI to PNG bytes
-    let png_bytes = crate::utils::capture_region_with_grim_cli(&geometry)?;
 
     // 4. Save PNG to a unique temp file in /tmp/
     let mut temp_file = Builder::new()

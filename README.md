@@ -1,230 +1,141 @@
-[![Crates.io Version](https://img.shields.io/crates/v/hyprshot-rs.svg)](https://crates.io/crates/hyprshot-rs) [![Crates.io Downloads](https://img.shields.io/crates/d/hyprshot-rs.svg)](https://crates.io/crates/hyprshot-rs) [![AUR version](https://img.shields.io/aur/version/hyprshot-rs)](https://aur.archlinux.org/packages/hyprshot-rs) [![Crates.io License](https://img.shields.io/crates/l/hyprshot-rs.svg)](https://crates.io/crates/hyprshot-rs) [![Rust](https://github.com/vremyavnikuda/hyprshot-rs/actions/workflows/rust.yml/badge.svg)](https://github.com/vremyavnikuda/hyprshot-rs/actions/workflows/rust.yml)
+[![Crates.io Version](https://img.shields.io/crates/v/hyprshot-rs.svg)](https://crates.io/crates/hyprshot-rs) [![Crates.io Downloads](https://img.shields.io/crates/d/hyprshot-rs.svg)](https://crates.io/crates/hyprshot-rs) [![AUR version](https://img.shields.io/aur/version/hyprshot-rs)](https://aur.archlinux.org/packages/hyprshot-rs) [![Crates.io License](https://img.shields.io/crates/l/hyprshot-rs.svg)](https://crates.io/crates/hyprshot-rs)
 
 ---
 
-> if you like this project, then the best way to express gratitude is to give it a star ⭐, it doesn't cost you anything, but I understand that I'm moving the project in the right direction.
+# Shot (hyprshot-rs)
 
 <p align="center">
   <img src="img/logo.svg" alt="Hyprshot-rs logo" width="200" />
 </p>
 
-# Hyprshot-rs
+A modern, fast, and feature-rich screenshot and screen recording utility for Wayland (highly optimized for Hyprland and Sway), written in pure Rust.
 
-## 0.1.9
-
-[CHANGELOG](/CHANGELOG.md)
-
-A utility to easily take screenshots on Wayland (tested on Hyprland and Sway).
+Unlike original projects that use shell wrappers, `shot` compiles to a single native binary, providing instant execution, region freezing, scroll stitching, and screen recording capabilities.
 
 ## Features
 
 - **Screenshot Capture**
-  - Capture the entire monitor (output)
-  - Capture the active monitor (output + active)
-  - Capturing the selected region
-  - Capturing the selected window
-  - Capture of the active window
+  - `shot now` — Capture the current active monitor
+  - `shot win` — Capture the active or a selected window (via compositor tree traversal)
+  - `shot area` — Capture a selected screen region
+  - `shot satty` — Capture a selected region and edit it immediately using the Satty annotation tool
+  - `shot ocr` — Capture a selected region and perform OCR text recognition
+  - `shot in5` / `shot in10` — Capture the active monitor after a 5 or 10-second countdown delay
 - **Scrolling Screenshot (Longshot)**
-  - Select region, scroll, and automatically stitch into a single vertical long image
-  - Uses lossless RGB recording for intermediate frames to ensure maximum stitching accuracy
+  - `shot longshot` — Toggle start/stop to capture a region and vertically stitch scrolled content into a single long image
+  - Employs lossless RGB video capture for intermediate frames to ensure maximum stitching quality and accuracy
 - **Region Screen Recording (Record)**
-  - Record a selected screen region to a modern WebM video file (`.webm` using VP9 codec)
-  - Pulsing selection overlay indicates the active recording boundary
-  - Automatically copies the saved video path to the clipboard upon completion
+  - `shot record` — Toggle start/stop to record a selected region to a modern WebM video file (`.webm` using VP9 codec)
+  - A flashing neon-red selection overlay is automatically displayed to mark the recording area
+  - Automatically copies the saved video path to the clipboard on completion
+- **Screen Freezing**
+  - Smooth interactive selection over a frozen desktop state (enabled by default, can be toggled via config)
 - **Save & Clipboard**
-  - Save screenshots to a specified folder and copy to clipboard (use `--clipboard-only` for clipboard-only)
-  - Screenshots saved in PNG format
+  - Saves captures to your configured screenshots directory (defaults to `~/Pictures` for images, `~/Videos/record` for recordings)
+  - Use `--clipboard-only` to copy directly to the clipboard instead of writing to disk
 - **Configuration System**
   - TOML-based configuration (`~/.config/hyprshot-rs/config.toml`)
-  - Persistent settings for paths, hotkeys, notifications, and more
-  - CLI commands for config management (`--init-config`, `--show-config`, `--set`)
-- **Hyprland Integration**
-  - Automatic keybinding generation (`--generate-hyprland-config`)
-  - One-command installation to hyprland.conf (`--install-binds`)
-  - Interactive hotkeys setup wizard (`--setup-hotkeys`)
-- **Documentation**
-  - Complete [CLI reference](doc/CLI.md)
-  - [Configuration guide](doc/CONFIGURATION.md)
-  - [Hotkeys setup guide](doc/HOTKEYS.md)
+  - Persistent settings for paths, notifications, satty/ocr commands, longshot, and recording configurations
 
 ## Installation
 
 ### Via Cargo:
-
 ```bash
 cargo install hyprshot-rs
 ```
-
-Note: `cargo install` builds from source. Selector functionality is provided by `slurp-rs` directly, so no external `slurp` binary is required.
+Selector functionality is provided natively via `slurp-rs`, so no external `slurp` binary is strictly required for screenshots.
 
 ### Via AUR (Arch Linux):
-
 ```bash
 yay -S hyprshot-rs
 ```
 
-The AUR package is the primary distribution channel: the newest releases and experimental features land there first. Dependencies are pulled automatically (no extra manual steps required).
-
 ### Runtime Dependencies
-
 **Required:**
+- `wl-clipboard` — for clipboard operations
+- A Wayland compositor (Hyprland or Sway)
 
-- `wl-clipboard` - for clipboard operations
-- a Wayland compositor (Hyprland or Sway)
-
-**Optional:**
-
-- No extra tools required for `--freeze`
-
-On Arch Linux (example):
-
-```bash
-sudo pacman -S wl-clipboard hyprland
-```
-
-> **Note:** selector functionality is fully provided by `slurp-rs` API.
+**For Record / Longshot:**
+- `wf-recorder` — required to capture screen feeds for recording and stitching
 
 ---
 
 ## Usage
 
-Make it available regardless of the shell
-
+### Command Syntax
 ```bash
-sudo ln -s ~/.local/share/cargo/bin/hyprshot-rs /usr/local/bin/
+shot [options ..] <command>
 ```
 
-```bash
-hyprshot-rs [options ..] [-m [mode] ..] -- [command]
-```
+### Subcommands
 
-```
-possible values: output, window, region, active, OUTPUT_NAME
-```
-
-Note: `active` is a modifier and must be combined with `output` or `window`.
-
-## Compatibility
-
-- `region` and `output` work on Wayland without `hyprctl` (via `slurp-rs` API backend).
-- `output -m DP-1` works without `hyprctl` (Wayland output enumeration).
-- `window` and `active` are supported on **Hyprland** and **Sway** only (via `hyprctl`/`swaymsg`).
-
-Possible values:
+- Capture the active monitor:
+  ```bash
+  shot now
+  ```
 
 - Capture a window:
+  ```bash
+  shot win
+  ```
 
-```bash
-hyprshot-rs -m window
-```
+- Capture a custom region:
+  ```bash
+  shot area
+  ```
 
-- To take a screenshot of a specific area of the screen, use:
+- Capture a region and edit with Satty:
+  ```bash
+  shot satty
+  ```
 
-```bash
-hyprshot-rs -m region
-```
-
-- If you have 2 or more monitors and want to take a screenshot of the workspace on a specific monitor:
-
-```bash
-hyprshot-rs -m output
-```
-
-- Quick capture (active monitor under the cursor):
-
-```bash
-hyprshot-rs -m output -m active
-```
-
-- Capture the active window:
-
-```bash
-hyprshot-rs -m window -m active
-```
-
-- Capture a specific monitor by name (example: `DP-1`):
-
-```bash
-hyprshot-rs -m output -m DP-1
-```
-
-Use your compositor to list output names (Hyprland: `hyprctl monitors`).
-
-- Take a screenshot of a selected area and save it in the current directory:
-  ~/repository
-
-```bash
-hyprshot-rs -m region -r > output.png
-```
-
-redirects the output to output.png in your current working directory. So if you're currently in ~/repository when running this command, that's where the screenshot will be saved, not in the default ~/Pictures directory.
+- Capture a region and perform OCR:
+  ```bash
+  shot ocr
+  ```
 
 - Scrolling Screenshot (Longshot):
-  Start a scrolling screenshot recording:
+  Start capture:
   ```bash
   shot longshot
   ```
-  Scroll down your screen, then run `shot longshot` again to finish, which will automatically stitch frames into a single long PNG.
+  Scroll down the target window/page, then run the command again to stop and save the stitched PNG:
+  ```bash
+  shot longshot
+  ```
 
 - Region Screen Recording (Record):
-  Start screen recording a selected region to a WebM video:
+  Start recording:
   ```bash
   shot record
   ```
-  Run `shot record` again to stop recording. The WebM file will be saved in `~/Videos/record/` and its path will be copied to your clipboard automatically.
+  Perform your actions, then run the command again to stop. The WebM video will be saved in `~/Videos/record/` and its path will be copied to your clipboard:
+  ```bash
+  shot record
+  ```
 
-Run `hyprshot-rs --help` or `hyprshot-rs -h` for more options.
+---
 
 ## Configuration
 
-Initialize configuration:
-
+Initialize default config:
 ```bash
-hyprshot-rs --init-config
-```
-
-Configure settings:
-
-```bash
-hyprshot-rs --set paths.screenshots_dir ~/user_name/Screenshots
-hyprshot-rs --set capture.notification_timeout 500
+shot --init-config
 ```
 
 View current configuration:
-
 ```bash
-hyprshot-rs --show-config
+shot --show-config
 ```
 
-## Hyprland Integration
-
-**Quick setup with interactive wizard:**
-
+Set configuration values:
 ```bash
-hyprshot-rs --setup-hotkeys
+shot --set paths.screenshots_dir ~/Pictures/Screenshots
+shot --set record.fps 60
+shot --set record.crf 30
 ```
 
-**Or manually generate and install keybindings:**
-
-```bash
-# Generate keybindings
-hyprshot-rs --generate-hyprland-config --with-clipboard
-
-# Install to hyprland.conf (creates backup)
-hyprshot-rs --install-binds --with-clipboard
-```
-
-**Manual configuration** - add to hyprland.conf:
-
-```cfg
-bind = SUPER, Print, exec, hyprshot-rs -m window
-bind = SUPER SHIFT, Print, exec, hyprshot-rs -m region
-bind = SUPER CTRL, Print, exec, hyprshot-rs -m output
-bind = , Print, exec, hyprshot-rs -m output -m active
-```
-
-See [HOTKEYS.md](doc/HOTKEYS.md) for more examples.
-Based on the implementation: [Hypershot](https://github.com/Gustash/Hyprshot)
+The configuration is saved in `~/.config/hyprshot-rs/config.toml`.
 
 ## License
 

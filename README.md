@@ -24,6 +24,13 @@ A utility to easily take screenshots on Wayland (tested on Hyprland and Sway).
   - Capturing the selected region
   - Capturing the selected window
   - Capture of the active window
+- **Scrolling Screenshot (Longshot)**
+  - Select region, scroll, and automatically stitch into a single vertical long image
+  - Uses lossless RGB recording for intermediate frames to ensure maximum stitching accuracy
+- **Region Screen Recording (Record)**
+  - Record a selected screen region to a modern WebM video file (`.webm` using VP9 codec)
+  - Pulsing selection overlay indicates the active recording boundary
+  - Automatically copies the saved video path to the clipboard upon completion
 - **Save & Clipboard**
   - Save screenshots to a specified folder and copy to clipboard (use `--clipboard-only` for clipboard-only)
   - Screenshots saved in PNG format
@@ -151,6 +158,20 @@ hyprshot-rs -m region -r > output.png
 ```
 
 redirects the output to output.png in your current working directory. So if you're currently in ~/repository when running this command, that's where the screenshot will be saved, not in the default ~/Pictures directory.
+
+- Scrolling Screenshot (Longshot):
+  Start a scrolling screenshot recording:
+  ```bash
+  shot longshot
+  ```
+  Scroll down your screen, then run `shot longshot` again to finish, which will automatically stitch frames into a single long PNG.
+
+- Region Screen Recording (Record):
+  Start screen recording a selected region to a WebM video:
+  ```bash
+  shot record
+  ```
+  Run `shot record` again to stop recording. The WebM file will be saved in `~/Videos/record/` and its path will be copied to your clipboard automatically.
 
 Run `hyprshot-rs --help` or `hyprshot-rs -h` for more options.
 

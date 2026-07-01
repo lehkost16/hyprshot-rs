@@ -199,69 +199,64 @@ impl Dispatch<ZwlrLayerShellV1, ()> for State {
 
 fn draw_selection_border(
     mmap: &mut [u8],
-    width: i32,  // buffer width in physical pixels
-    height: i32, // buffer height in physical pixels
-    rx: i32,     // selection x relative to output, in logical pixels
-    ry: i32,     // selection y relative to output, in logical pixels
-    rw: i32,     // selection width in logical pixels
-    rh: i32,     // selection height in logical pixels
-    true_scale: f64, // real fractional scale factor (e.g. 1.25)
+    width: i32,
+    height: i32,
+    rx: i32,
+    ry: i32,
+    rw: i32,
+    rh: i32,
+    true_scale: f64,
     alpha: u8,
 ) {
-    mmap.fill(0);
-    let color = [0u8, 0u8, alpha, alpha];
-    
     let thick = ((BORDER_THICK as f64) * true_scale).round() as i32;
     let padding = ((PADDING as f64) * true_scale).round() as i32;
-    
-    // Convert logical coords to physical
+
     let border_l = ((rx as f64 * true_scale) as i32 - padding).max(0);
     let border_r = (((rx + rw) as f64 * true_scale) as i32 + padding).min(width);
     let border_t = ((ry as f64 * true_scale) as i32 - padding).max(0);
     let border_b = (((ry + rh) as f64 * true_scale) as i32 + padding).min(height);
-    
+
     if border_l >= border_r || border_t >= border_b {
         return;
     }
 
-    // Draw top line
-    for y in border_t..std::cmp::min(border_t + thick, border_b) {
-        for x in border_l..border_r {
-            let offset = ((y * width + x) * 4) as usize;
-            if offset + 3 < mmap.len() {
-                mmap[offset..offset+4].copy_from_slice(&color);
+    // Ranges for the four border stripes
+    let top_range    = border_t..std::cmp::min(border_t + thick, border_b);
+    let bottom_range = std::cmp::max(border_b - thick, border_t)..border_b;
+    let left_range   = border_l..std::cmp::min(border_l + thick, border_r);
+    let right_range  = std::cmp::max(border_r - thick, border_l)..border_r;
+
+    // ARGB8888 (little-endian): bytes are [B, G, R, A]
+    // We want opaque red: B=0, G=0, R=255, A=alpha (premultiplied)
+    let r = alpha; // premultiplied: R_pre = 255 * alpha/255 = alpha
+
+    let paint = |mmap: &mut [u8], y: i32, x_start: i32, x_end: i32| {
+        for x in x_start..x_end {
+            let off = ((y * width + x) * 4) as usize;
+            if off + 3 < mmap.len() {
+                mmap[off]     = 0;     // B
+                mmap[off + 1] = 0;     // G
+                mmap[off + 2] = r;     // R
+                mmap[off + 3] = alpha; // A
             }
         }
-    }
+    };
 
-    // Draw bottom line
-    for y in std::cmp::max(border_t, border_b - thick)..border_b {
-        for x in border_l..border_r {
-            let offset = ((y * width + x) * 4) as usize;
-            if offset + 3 < mmap.len() {
-                mmap[offset..offset+4].copy_from_slice(&color);
-            }
-        }
+    // Top stripe
+    for y in top_range {
+        paint(mmap, y, border_l, border_r);
     }
-
-    // Draw left line
+    // Bottom stripe
+    for y in bottom_range {
+        paint(mmap, y, border_l, border_r);
+    }
+    // Left stripe (between top and bottom)
     for y in border_t..border_b {
-        for x in border_l..std::cmp::min(border_l + thick, border_r) {
-            let offset = ((y * width + x) * 4) as usize;
-            if offset + 3 < mmap.len() {
-                mmap[offset..offset+4].copy_from_slice(&color);
-            }
-        }
+        paint(mmap, y, left_range.start, left_range.end);
     }
-
-    // Draw right line
+    // Right stripe
     for y in border_t..border_b {
-        for x in std::cmp::max(border_l, border_r - thick)..border_r {
-            let offset = ((y * width + x) * 4) as usize;
-            if offset + 3 < mmap.len() {
-                mmap[offset..offset+4].copy_from_slice(&color);
-            }
-        }
+        paint(mmap, y, right_range.start, right_range.end);
     }
 }
 
@@ -389,13 +384,21 @@ pub fn run_overlay(
     });
 
     let surface_entry = state.surface.as_mut().unwrap();
+    // Draw the border once at full opacity to populate the buffer cleanly
+    // before the first commit — avoids race between compositor read and our write
+    draw_selection_border(
+        &mut surface_entry.mmap,
+        w_buf, h_buf,
+        rx, ry, w, h,
+        1.0,
+        255,
+    );
     surface_entry.surface.attach(Some(&surface_entry.buffer), 0, 0);
     surface_entry.surface.damage_buffer(0, 0, w_buf, h_buf);
     surface_entry.surface.commit();
     conn.flush().ok();
 
-    // Event loop with breathing/flashing border
-    // Draw at logical pixel coords — no scale conversion needed
+    // Animation loop: update alpha in border pixels only (no full clear = no race condition)
     let start_time = std::time::Instant::now();
     loop {
         let elapsed = start_time.elapsed().as_secs_f32();
@@ -403,17 +406,11 @@ pub fn run_overlay(
         let alpha = (((elapsed * 2.0 * std::f32::consts::PI * 1.5).sin() + 1.0) * 0.5 * 200.0 + 55.0) as u8;
 
         let surface_entry = state.surface.as_mut().unwrap();
-        // Draw at logical coords: rx, ry, w, h are already in logical pixels;
-        // true_scale = 1.0 since buffer is logical
         draw_selection_border(
             &mut surface_entry.mmap,
-            w_buf,
-            h_buf,
-            rx,
-            ry,
-            w,
-            h,
-            1.0,   // draw at logical 1:1
+            w_buf, h_buf,
+            rx, ry, w, h,
+            1.0,
             alpha,
         );
 
@@ -423,7 +420,7 @@ pub fn run_overlay(
 
         event_queue.roundtrip(&mut state).ok();
 
-        // ~20 FPS — smooth animation, near-zero CPU usage
+        // ~20 FPS
         thread::sleep(Duration::from_millis(50));
     }
 }

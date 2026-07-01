@@ -166,13 +166,6 @@ pub fn run(mut args: Args) -> Result<()> {
                 _ => unreachable!(),
             };
 
-            if let Some(guard) = freeze_guard {
-                guard.stop()?;
-                std::thread::sleep(std::time::Duration::from_millis(150));
-            } else {
-                std::thread::sleep(std::time::Duration::from_millis(150));
-            }
-
             let save_dir = config::get_screenshots_dir(args.output_folder.clone(), &config, debug)?;
             let save_dir = if !clipboard_only && !raw {
                 config::ensure_directory(&save_dir.to_string_lossy())?
@@ -194,6 +187,13 @@ pub fn run(mut args: Args) -> Result<()> {
                 notif_timeout,
                 debug,
             )?;
+
+            if let Some(guard) = freeze_guard {
+                guard.stop()?;
+                std::thread::sleep(std::time::Duration::from_millis(150));
+            } else {
+                std::thread::sleep(std::time::Duration::from_millis(150));
+            }
         }
         Subcommands::Overlay { .. } => unreachable!(),
     }

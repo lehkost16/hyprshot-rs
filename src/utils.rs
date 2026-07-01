@@ -360,9 +360,13 @@ pub fn capture_region_with_grim_cli(geometry: &Geometry) -> Result<Vec<u8>> {
     );
     let mut cmd = Command::new("grim");
     cmd.arg("-g").arg(&geom_str);
-    cmd.arg("-t").arg(&config.capture.file_type);
-    cmd.arg("-q").arg(config.capture.jpeg_quality.to_string());
-    cmd.arg("-l").arg(config.capture.png_level.to_string());
+    let file_type = config.capture.file_type.trim().to_lowercase();
+    cmd.arg("-t").arg(&file_type);
+    if file_type == "jpeg" || file_type == "jpg" {
+        cmd.arg("-q").arg(config.capture.jpeg_quality.to_string());
+    } else if file_type == "png" {
+        cmd.arg("-l").arg(config.capture.png_level.to_string());
+    }
     cmd.arg("-");
 
     let output = cmd

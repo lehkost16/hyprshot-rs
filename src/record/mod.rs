@@ -107,7 +107,7 @@ pub fn handle_record(args: &Args, config: &config::Config) -> Result<()> {
             .unwrap_or(("eDP-1".to_string(), 1.0, 0, 0));
         let scale = scale_f;
 
-        let filename = format!("record_{}.mp4", Local::now().format("%Y-%m-%d-%H%M%S"));
+        let filename = format!("record_{}.webm", Local::now().format("%Y-%m-%d-%H%M%S"));
         let video_path = save_dir.join(filename);
         let video_path_str = video_path.to_string_lossy().to_string();
 
@@ -118,7 +118,7 @@ pub fn handle_record(args: &Args, config: &config::Config) -> Result<()> {
             );
         }
 
-        // Spawn wf-recorder with standard recording parameters
+        // Spawn wf-recorder with standard recording parameters for WebM VP9
         let fps_arg = format!("fps={}", config.record.fps);
         let crf_arg = config.record.crf.to_string();
         
@@ -127,8 +127,7 @@ pub fn handle_record(args: &Args, config: &config::Config) -> Result<()> {
             .arg(format!("{},{} {}x{}", geometry.x, geometry.y, geometry.width, geometry.height))
             .arg("-f")
             .arg(&video_path_str)
-            .arg("-c").arg("libx264")
-            .arg("-p").arg("preset=fast")
+            .arg("-c").arg("libvpx-vp9")
             .arg("-p").arg(format!("crf={}", crf_arg))
             .arg("-F")
             .arg(&fps_arg)

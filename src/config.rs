@@ -154,7 +154,7 @@ fn default_longshot_static_threshold() -> f32 {
 }
 
 fn default_record_fps() -> u32 { 30 }
-fn default_record_crf() -> u32 { 23 }
+fn default_record_crf() -> u32 { 32 }
 
 /// Configuration for region screen recording
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -162,7 +162,7 @@ pub struct RecordConfig {
     /// Recording frame rate. Default: 30
     #[serde(default = "default_record_fps")]
     pub fps: u32,
-    /// libx264 CRF quality (0=lossless, 51=worst). Default: 23
+    /// libvpx-vp9 CRF quality (0=lossless, 63=worst). Default: 32
     #[serde(default = "default_record_crf")]
     pub crf: u32,
 }

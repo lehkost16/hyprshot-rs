@@ -14,7 +14,9 @@ use crate::cli::Args;
 use crate::config;
 use crate::selector;
 
-const STATE_FILE: &str = "/tmp/shot-record.json";
+fn state_file_path() -> std::path::PathBuf {
+    std::env::temp_dir().join("shot-record.json")
+}
 
 #[derive(Serialize, Deserialize, Debug)]
 struct RecordState {
@@ -34,11 +36,13 @@ pub fn handle_record(args: &Args, config: &config::Config) -> Result<()> {
         .notif_timeout
         .unwrap_or(config.capture.notification_timeout);
 
+    let state_file = state_file_path();
+
     // Check if recording is already active
-    if Path::new(STATE_FILE).exists() {
+    if state_file.exists() {
         // Read state
         let state_data =
-            fs::read_to_string(STATE_FILE).context("Failed to read record state file")?;
+            fs::read_to_string(&state_file).context("Failed to read record state file")?;
         let state: RecordState =
             serde_json::from_str(&state_data).context("Failed to parse record state JSON")?;
 
@@ -65,7 +69,7 @@ pub fn handle_record(args: &Args, config: &config::Config) -> Result<()> {
         }
 
         // Delete state file
-        let _ = fs::remove_file(STATE_FILE);
+        let _ = fs::remove_file(&state_file);
 
         // Copy the output video path to clipboard
         let wl_copy_cmd = Command::new("wl-copy").stdin(Stdio::piped()).spawn();
@@ -96,11 +100,8 @@ pub fn handle_record(args: &Args, config: &config::Config) -> Result<()> {
         Ok(())
     } else {
         // Start recording
-        let home_dir = dirs::home_dir().context("Failed to get home directory")?;
-        let save_dir = home_dir.join("Videos").join("record");
-
-        // Ensure directory exists
-        fs::create_dir_all(&save_dir).context("Failed to create Videos/record directory")?;
+        let save_dir = config::get_recordings_dir(args.output_folder.clone(), config, debug)?;
+        let save_dir = config::ensure_directory(&save_dir.to_string_lossy())?;
 
         // Select region
         let geometry = selector::select_region(debug)?;
@@ -146,7 +147,7 @@ pub fn handle_record(args: &Args, config: &config::Config) -> Result<()> {
         let rec_pid = rec_child.id();
 
         // Spawn overlay
-        let log_file = std::fs::File::create("/tmp/shot_overlay.log").ok();
+        let log_file = std::fs::File::create(std::env::temp_dir().join("shot_overlay.log")).ok();
         let stderr_cfg = log_file.map(Stdio::from).unwrap_or_else(|| Stdio::null());
 
         let exe_path = std::env::current_exe().context("Failed to get current executable path")?;
@@ -182,7 +183,7 @@ pub fn handle_record(args: &Args, config: &config::Config) -> Result<()> {
         };
         let state_json =
             serde_json::to_string_pretty(&state).context("Failed to serialize state to JSON")?;
-        fs::write(STATE_FILE, state_json).context("Failed to write record state file")?;
+        fs::write(&state_file, state_json).context("Failed to write record state file")?;
 
         // Send starting notification
         if !silent {

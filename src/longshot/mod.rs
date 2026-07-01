@@ -17,7 +17,9 @@ use crate::selector;
 pub mod overlay;
 pub mod stitcher;
 
-const STATE_FILE: &str = "/tmp/shot-longshot.json";
+fn state_file_path() -> std::path::PathBuf {
+    std::env::temp_dir().join("shot-longshot.json")
+}
 
 #[derive(Serialize, Deserialize, Debug)]
 struct LongshotState {
@@ -41,11 +43,13 @@ pub fn handle_longshot(args: &Args, config: &config::Config) -> Result<()> {
         .notif_timeout
         .unwrap_or(config.capture.notification_timeout);
 
+    let state_file = state_file_path();
+
     // Check if a longshot recording is already active
-    if Path::new(STATE_FILE).exists() {
+    if state_file.exists() {
         // Read state
         let state_data =
-            fs::read_to_string(STATE_FILE).context("Failed to read longshot state file")?;
+            fs::read_to_string(&state_file).context("Failed to read longshot state file")?;
         let state: LongshotState =
             serde_json::from_str(&state_data).context("Failed to parse longshot state JSON")?;
 
@@ -93,7 +97,7 @@ pub fn handle_longshot(args: &Args, config: &config::Config) -> Result<()> {
         );
 
         // Delete state file
-        let _ = fs::remove_file(STATE_FILE);
+        let _ = fs::remove_file(&state_file);
 
         match stitch_res {
             Ok(()) => {
@@ -165,7 +169,10 @@ pub fn handle_longshot(args: &Args, config: &config::Config) -> Result<()> {
             .unwrap_or(("eDP-1".to_string(), 1.0, 0, 0));
         let scale = scale_f;
 
-        let video_path = format!("/tmp/shot_longshot_{}.mp4", std::process::id());
+        let video_path = std::env::temp_dir()
+            .join(format!("shot_longshot_{}.mp4", std::process::id()))
+            .to_string_lossy()
+            .to_string();
         let filename = format!("longshot_{}.png", Local::now().format("%Y-%m-%d-%H%M%S"));
         let output_path = save_dir.join(filename);
 
@@ -204,7 +211,7 @@ pub fn handle_longshot(args: &Args, config: &config::Config) -> Result<()> {
         let rec_pid = rec_child.id();
 
         // Spawn overlay
-        let log_file = std::fs::File::create("/tmp/shot_overlay.log").ok();
+        let log_file = std::fs::File::create(std::env::temp_dir().join("shot_overlay.log")).ok();
         let stderr_cfg = log_file.map(Stdio::from).unwrap_or_else(|| Stdio::null());
 
         let exe_path = std::env::current_exe().context("Failed to get current executable path")?;
@@ -244,7 +251,7 @@ pub fn handle_longshot(args: &Args, config: &config::Config) -> Result<()> {
         };
         let state_json =
             serde_json::to_string_pretty(&state).context("Failed to serialize state to JSON")?;
-        fs::write(STATE_FILE, state_json).context("Failed to write longshot state file")?;
+        fs::write(&state_file, state_json).context("Failed to write longshot state file")?;
 
         // Send starting notification
         if !silent {

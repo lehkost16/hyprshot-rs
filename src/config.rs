@@ -173,6 +173,10 @@ fn default_record_crf() -> u32 {
     25
 }
 
+fn default_record_save_dir() -> String {
+    "~/Videos/record".to_string()
+}
+
 fn default_file_type() -> String {
     "png".to_string()
 }
@@ -194,6 +198,9 @@ pub struct RecordConfig {
     /// libvpx-vp9 CRF quality (0=lossless, 63=worst). Default: 25
     #[serde(default = "default_record_crf")]
     pub crf: u32,
+    /// Directory where video recordings will be saved. Default: ~/Videos/record
+    #[serde(default = "default_record_save_dir")]
+    pub save_dir: String,
 }
 
 impl Default for RecordConfig {
@@ -201,6 +208,7 @@ impl Default for RecordConfig {
         Self {
             fps: default_record_fps(),
             crf: default_record_crf(),
+            save_dir: default_record_save_dir(),
         }
     }
 }
@@ -421,6 +429,32 @@ pub fn get_screenshots_dir(
     if debug {
         eprintln!(
             "Using screenshot directory from config: {}",
+            config_path.display()
+        );
+    }
+    Ok(config_path)
+}
+
+/// Get recording save directory with priority:
+/// 1. CLI argument output_folder (if provided)
+/// 2. Config file value
+/// 3. Default ~/Videos/record
+pub fn get_recordings_dir(
+    cli_path: Option<PathBuf>,
+    config: &Config,
+    debug: bool,
+) -> Result<PathBuf> {
+    if let Some(path) = cli_path {
+        if debug {
+            eprintln!("Using recording directory from CLI: {}", path.display());
+        }
+        return Ok(path);
+    }
+
+    let config_path = expand_path(&config.record.save_dir)?;
+    if debug {
+        eprintln!(
+            "Using recording directory from config: {}",
             config_path.display()
         );
     }

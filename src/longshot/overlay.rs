@@ -432,7 +432,7 @@ pub fn run_overlay(
         .unwrap_or(1080);
 
     let _ = std::fs::write(
-        "/tmp/overlay_debug.log",
+        std::env::temp_dir().join("overlay_debug.log"),
         format!(
             "buf={w_buf}x{h_buf} mode={:?}x{:?} scale_int={scale_int} rx={rx} ry={ry} w={w} h={h}\n",
             mode_width, mode_height

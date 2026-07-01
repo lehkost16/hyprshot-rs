@@ -20,6 +20,8 @@ pub struct Config {
     pub ocr: OcrConfig,
     #[serde(default)]
     pub longshot: LongshotConfig,
+    #[serde(default)]
+    pub record: RecordConfig,
 }
 
 /// Configuration for paths
@@ -151,6 +153,29 @@ fn default_longshot_static_threshold() -> f32 {
     1.0
 }
 
+fn default_record_fps() -> u32 { 30 }
+fn default_record_crf() -> u32 { 23 }
+
+/// Configuration for region screen recording
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct RecordConfig {
+    /// Recording frame rate. Default: 30
+    #[serde(default = "default_record_fps")]
+    pub fps: u32,
+    /// libx264 CRF quality (0=lossless, 51=worst). Default: 23
+    #[serde(default = "default_record_crf")]
+    pub crf: u32,
+}
+
+impl Default for RecordConfig {
+    fn default() -> Self {
+        Self {
+            fps: default_record_fps(),
+            crf: default_record_crf(),
+        }
+    }
+}
+
 impl Default for PathsConfig {
     fn default() -> Self {
         Self {
@@ -217,6 +242,7 @@ impl Default for Config {
             satty: SattyConfig::default(),
             ocr: OcrConfig::default(),
             longshot: LongshotConfig::default(),
+            record: RecordConfig::default(),
         }
     }
 }

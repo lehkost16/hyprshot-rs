@@ -15,6 +15,7 @@ use crate::save;
 use crate::utils;
 use crate::external;
 use crate::longshot;
+use crate::record;
 
 pub fn run(mut args: Args) -> Result<()> {
     // Handle config management commands first
@@ -81,6 +82,9 @@ pub fn run(mut args: Args) -> Result<()> {
         }
         Subcommands::Longshot => {
             return longshot::handle_longshot(&args, &config);
+        }
+        Subcommands::Record => {
+            return record::handle_record(&args, &config);
         }
         Subcommands::Now | Subcommands::Win | Subcommands::Area | Subcommands::In5 | Subcommands::In10 => {
             let debug = args.debug;
@@ -216,6 +220,7 @@ Commands:
   in5           Take a screenshot of the current monitor after 5s countdown
   in10          Take a screenshot of the current monitor after 10s countdown
   longshot      Start/stop a scrolling screenshot
+  record        Record a selected region of the screen (toggle start/stop)
 
 Options:
   -h, --help                show help message

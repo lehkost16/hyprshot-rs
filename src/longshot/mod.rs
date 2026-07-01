@@ -171,13 +171,16 @@ pub fn handle_longshot(args: &Args, config: &config::Config) -> Result<()> {
             );
         }
 
-        // Spawn wf-recorder
+        // Spawn wf-recorder with lossless libx264rgb settings for pixel-perfect frame capture
         let fps_arg = format!("fps={}", config.longshot.fps);
         let rec_child = Command::new("wf-recorder")
             .arg("-g")
             .arg(format!("{},{} {}x{}", geometry.x, geometry.y, geometry.width, geometry.height))
             .arg("-f")
             .arg(&video_path)
+            .arg("-c").arg("libx264rgb")
+            .arg("-p").arg("preset=ultrafast")
+            .arg("-p").arg("crf=0")
             .arg("-F")
             .arg(&fps_arg)
             .stdout(Stdio::null())

@@ -85,6 +85,8 @@ pub enum Subcommands {
     In10,
     #[command(about = "Scroll recording and stitch long screenshot")]
     Longshot,
+    #[command(about = "Record a selected screen region to video (toggle start/stop)")]
+    Record,
     #[command(hide = true)]
     Overlay {
         #[arg(long)]

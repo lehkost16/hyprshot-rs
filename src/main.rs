@@ -14,6 +14,7 @@ mod selector;
 mod utils;
 mod external;
 mod longshot;
+mod record;
 pub use cli::{Args, Subcommands, default_filename, resolve_delay, resolve_notif_timeout};
 
 fn main() -> Result<()> {

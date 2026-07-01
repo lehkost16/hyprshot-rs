@@ -341,32 +341,29 @@ pub fn run_overlay(
     surface.commit();
     event_queue.roundtrip(&mut state).context("Failed to configure overlay surface")?;
 
-    // Compute true fractional scale: physical / logical
-    // configured_w/h are the compositor's logical dimensions (e.g. 2048x1280)
-    // mode_width/height are the display physical pixels (e.g. 2560x1600)
-    // We use physical pixels directly as the SHM buffer — no set_buffer_scale needed.
-    let w_logical = state.configured_w.filter(|&w| w > 0).map(|w| w as i32)
-        .or_else(|| mode_width.map(|mw| mw * 100 / scale_int.max(1) / 100))
+    // The compositor configures the layer surface at logical pixel dimensions (e.g. 2048x1280).
+    // The buffer MUST match these logical dimensions exactly — if we provide a larger buffer
+    // (e.g. 2560x1600 physical) with buffer_scale=1, the compositor sees a 2560x1600 logical
+    // surface on a 2048x1280 configured surface and ignores the content.
+    //
+    // Correct approach: use logical dimensions as buffer size, draw at logical coords.
+    // The compositor handles upscaling to physical pixels internally (fractional scale).
+    let w_buf = state.configured_w.filter(|&w| w > 0).map(|w| w as i32)
+        .or_else(|| mode_width.map(|mw| if scale_int > 0 { mw / scale_int } else { mw }))
         .unwrap_or(1920);
-    let h_logical = state.configured_h.filter(|&h| h > 0).map(|h| h as i32)
-        .or_else(|| mode_height.map(|mh| mh * 100 / scale_int.max(1) / 100))
+    let h_buf = state.configured_h.filter(|&h| h > 0).map(|h| h as i32)
+        .or_else(|| mode_height.map(|mh| if scale_int > 0 { mh / scale_int } else { mh }))
         .unwrap_or(1080);
 
-    // Physical buffer = actual display pixels
-    let w_phys = mode_width.unwrap_or(w_logical * scale_int);
-    let h_phys = mode_height.unwrap_or(h_logical * scale_int);
-
-    // True fractional scale factor for drawing
-    let true_scale = if w_logical > 0 { w_phys as f64 / w_logical as f64 } else { scale_int as f64 };
-
-    let stride = w_phys * 4;
-    let size = (stride * h_phys) as usize;
-
     let _ = std::fs::write("/tmp/overlay_debug.log", format!(
-        "logical={w_logical}x{h_logical} phys={w_phys}x{h_phys} true_scale={true_scale:.4} rx={rx} ry={ry} w={w} h={h}\n"
+        "buf={w_buf}x{h_buf} mode={:?}x{:?} scale_int={scale_int} rx={rx} ry={ry} w={w} h={h}\n",
+        mode_width, mode_height
     ));
 
-    // Create shm buffer
+    let stride = w_buf * 4;
+    let size = (stride * h_buf) as usize;
+
+    // Create shm buffer at logical dimensions
     let mut tmp_file = tempfile::NamedTempFile::new().context("Failed to create temporary file for shm")?;
     tmp_file.as_file_mut().set_len(size as u64).context("Failed to resize shm file")?;
     let mmap = unsafe { memmap2::MmapMut::map_mut(&tmp_file).context("Failed to map shm")? };
@@ -377,12 +374,11 @@ pub fn run_overlay(
         &qh,
         (),
     );
-    // Buffer is physical pixels; set_buffer_scale(1) so compositor treats each pixel as 1 physical pixel
-    let buffer = pool.create_buffer(0, w_phys, h_phys, stride, wl_shm::Format::Argb8888, &qh, ());
+    let buffer = pool.create_buffer(0, w_buf, h_buf, stride, wl_shm::Format::Argb8888, &qh, ());
     pool.destroy();
 
-    // Do NOT call set_buffer_scale — we handle scaling ourselves via true_scale
-    // surface.set_buffer_scale(1) is the default
+    // buffer_scale stays at 1 (default) — buffer is in logical pixels
+    // compositor upscales to physical internally
 
     state.surface = Some(SurfaceEntry {
         surface,
@@ -394,37 +390,40 @@ pub fn run_overlay(
 
     let surface_entry = state.surface.as_mut().unwrap();
     surface_entry.surface.attach(Some(&surface_entry.buffer), 0, 0);
-    surface_entry.surface.damage_buffer(0, 0, w_phys, h_phys);
+    surface_entry.surface.damage_buffer(0, 0, w_buf, h_buf);
     surface_entry.surface.commit();
     conn.flush().ok();
 
     // Event loop with breathing/flashing border
+    // Draw at logical pixel coords — no scale conversion needed
     let start_time = std::time::Instant::now();
     loop {
         let elapsed = start_time.elapsed().as_secs_f32();
-        // Breathing alpha value: frequency 1.5Hz
+        // Breathing alpha: 1.5 Hz oscillation between ~55 and ~255
         let alpha = (((elapsed * 2.0 * std::f32::consts::PI * 1.5).sin() + 1.0) * 0.5 * 200.0 + 55.0) as u8;
-        
+
         let surface_entry = state.surface.as_mut().unwrap();
+        // Draw at logical coords: rx, ry, w, h are already in logical pixels;
+        // true_scale = 1.0 since buffer is logical
         draw_selection_border(
             &mut surface_entry.mmap,
-            w_phys,
-            h_phys,
+            w_buf,
+            h_buf,
             rx,
             ry,
             w,
             h,
-            true_scale,
+            1.0,   // draw at logical 1:1
             alpha,
         );
-        
-        surface_entry.surface.damage_buffer(0, 0, w_phys, h_phys);
+
+        surface_entry.surface.damage_buffer(0, 0, w_buf, h_buf);
         surface_entry.surface.commit();
         conn.flush().ok();
 
         event_queue.roundtrip(&mut state).ok();
-        
-        // Target roughly 20 FPS for smooth flashing without wasting CPU
+
+        // ~20 FPS — smooth animation, near-zero CPU usage
         thread::sleep(Duration::from_millis(50));
     }
 }

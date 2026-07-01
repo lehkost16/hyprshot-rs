@@ -797,7 +797,7 @@ Check the support for this protocol on Hyprland/Sway/River/Wayfire."
                 .or_else(|| output.logical_height)
                 .unwrap_or(0);
 
-            let buffer_scale = output_buffer_scale(output);
+            let buffer_scale = 1;
 
             let width = capture.width;
             let height = capture.height;
@@ -966,10 +966,6 @@ Check the support for this protocol on Hyprland/Sway/River/Wayfire."
         }
 
         close(a.0, b.0) && close(a.1, b.1) && close(a.2, b.2) && close(a.3, b.3)
-    }
-
-    fn output_buffer_scale(output: &OutputEntry) -> i32 {
-        output.scale.max(1)
     }
 
     fn match_outputs(

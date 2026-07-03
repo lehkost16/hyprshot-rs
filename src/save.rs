@@ -6,8 +6,6 @@ use std::process::{Command, Stdio};
 
 use crate::geometry::Geometry;
 
-
-
 #[cfg(feature = "grim")]
 #[allow(clippy::too_many_arguments)]
 pub fn save_geometry_with_grim(
@@ -19,6 +17,7 @@ pub fn save_geometry_with_grim(
     silent: bool,
     notif_timeout: u32,
     debug: bool,
+    png_bytes: Option<Vec<u8>>,
 ) -> Result<()> {
     use std::io::Write;
 
@@ -26,7 +25,10 @@ pub fn save_geometry_with_grim(
         eprintln!("Saving geometry with grim CLI: {}", geometry);
     }
 
-    let png_bytes = crate::utils::capture_region_with_grim_cli(geometry)?;
+    let png_bytes = match png_bytes {
+        Some(bytes) => bytes,
+        None => crate::utils::capture_region_with_grim_cli(geometry)?,
+    };
 
     if raw {
         std::io::stdout().write_all(&png_bytes)?;
@@ -128,6 +130,7 @@ pub fn save_geometry(
     silent: bool,
     notif_timeout: u32,
     debug: bool,
+    png_bytes: Option<Vec<u8>>,
 ) -> Result<()> {
     #[cfg(feature = "grim")]
     return save_geometry_with_grim(
@@ -139,6 +142,7 @@ pub fn save_geometry(
         silent,
         notif_timeout,
         debug,
+        png_bytes,
     );
     #[cfg(not(feature = "grim"))]
     compile_error!("Feature 'grim' must be enabled to save screenshots");

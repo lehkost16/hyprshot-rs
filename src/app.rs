@@ -166,6 +166,18 @@ pub fn run(mut args: Args) -> Result<()> {
                 _ => unreachable!(),
             };
 
+            let png_bytes = if freeze_guard.is_some() {
+                if debug {
+                    eprintln!(
+                        "Capture region BEFORE stopping freeze overlay to preserve transient windows (like tooltips)"
+                    );
+                }
+                let bytes = crate::utils::capture_region_with_grim_cli(&geometry)?;
+                Some(bytes)
+            } else {
+                None
+            };
+
             if let Some(guard) = freeze_guard {
                 guard.stop()?;
                 std::thread::sleep(std::time::Duration::from_millis(150));
@@ -193,6 +205,7 @@ pub fn run(mut args: Args) -> Result<()> {
                 silent,
                 notif_timeout,
                 debug,
+                png_bytes,
             )?;
         }
         Subcommands::Overlay { .. } => unreachable!(),

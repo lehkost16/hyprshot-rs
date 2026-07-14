@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to hyprshot-rs will be documented in this file.
+All notable changes to hyshot will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
@@ -74,7 +74,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.1.3] 2025-10-04
 
 ### Added
-- **Configuration System**: Full TOML-based configuration with `~/.config/hyprshot-rs/config.toml`
+- **Configuration System**: Full TOML-based configuration with `~/.config/hyshot/config.toml`
   - Persistent settings for paths, hotkeys, capture options, and advanced settings
   - CLI commands: `--init-config`, `--show-config`, `--config-path`, `--set KEY VALUE`
   - Path expansion support (`~`, `$HOME`, `$VAR`, `$XDG_PICTURES_DIR`)

@@ -1,4 +1,4 @@
-`hyprshot-rs` is a screenshot creation utility in Hyprland.
+`hyshot` is a screenshot creation utility in Hyprland.
 Copyright (C) 2025 Andrew Nevsky
 
 This program is free software: you can redistribute it and/or modify

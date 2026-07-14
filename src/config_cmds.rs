@@ -18,9 +18,9 @@ pub fn handle_init_config() -> Result<()> {
     println!("\nDefault configuration:");
     println!("Screenshots directory: {}", config.paths.screenshots_dir);
     println!("\nYou can edit this file manually or use:");
-    println!("hyprshot-rs --set KEY VALUE");
+    println!("hyshot --set KEY VALUE");
     println!("\nExample:");
-    println!("hyprshot-rs --set paths.screenshots_dir ~/Documents/Screenshots");
+    println!("hyshot --set paths.screenshots_dir ~/Documents/Screenshots");
 
     Ok(())
 }
@@ -91,8 +91,6 @@ fn set_config_value(config: &mut config::Config, key: &str, value: &str) -> Resu
             config.paths.screenshots_dir = value.to_string();
         }
 
-
-
         // [capture] section
         ("capture", "notification") => {
             config.capture.notification =
@@ -104,8 +102,7 @@ fn set_config_value(config: &mut config::Config, key: &str, value: &str) -> Resu
                 .context("Value must be a number (milliseconds)")?;
         }
         ("capture", "save_file") => {
-            config.capture.save_file =
-                value.parse().context("Value must be 'true' or 'false'")?;
+            config.capture.save_file = value.parse().context("Value must be 'true' or 'false'")?;
         }
 
         // [advanced] section
@@ -134,13 +131,16 @@ fn set_config_value(config: &mut config::Config, key: &str, value: &str) -> Resu
             config.longshot.fps = value.parse().context("Value must be a positive integer")?;
         }
         ("longshot", "match_threshold") => {
-            config.longshot.match_threshold = value.parse().context("Value must be a float (e.g. 0.8)")?;
+            config.longshot.match_threshold =
+                value.parse().context("Value must be a float (e.g. 0.8)")?;
         }
         ("longshot", "min_movement") => {
-            config.longshot.min_movement = value.parse().context("Value must be an integer (e.g. 5)")?;
+            config.longshot.min_movement =
+                value.parse().context("Value must be an integer (e.g. 5)")?;
         }
         ("longshot", "static_threshold") => {
-            config.longshot.static_threshold = value.parse().context("Value must be a float (e.g. 1.0)")?;
+            config.longshot.static_threshold =
+                value.parse().context("Value must be a float (e.g. 1.0)")?;
         }
 
         _ => {

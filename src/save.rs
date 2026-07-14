@@ -110,7 +110,7 @@ pub fn save_geometry_with_grim(
             .body(&message)
             .icon(&icon_name)
             .timeout(notif_timeout as i32)
-            .appname("Hyprshot-rs")
+            .appname("Hyshot")
             .show()
         {
             eprintln!("Warning: failed to show notification: {}", err);

@@ -5,14 +5,12 @@ use std::str::FromStr;
 use std::time::Duration;
 use std::{env, path::PathBuf};
 
-
-
 #[test]
 fn notif_timeout_cli_overrides_config() {
     let mut config = crate::config::Config::default();
     config.capture.notification_timeout = 7000;
 
-    let args = Args::parse_from(["hyprshot-rs", "--notif-timeout", "5000", "area"]);
+    let args = Args::parse_from(["hyshot", "--notif-timeout", "5000", "area"]);
 
     assert_eq!(resolve_notif_timeout(&args, &config), 5000);
 }
@@ -22,7 +20,7 @@ fn delay_uses_milliseconds_from_config() {
     let mut config = crate::config::Config::default();
     config.advanced.delay_ms = 250;
 
-    let args = Args::parse_from(["hyprshot-rs", "area"]);
+    let args = Args::parse_from(["hyshot", "area"]);
     assert_eq!(resolve_delay(&args, &config), Duration::from_millis(250));
 }
 
@@ -93,8 +91,6 @@ fn geometry_slurp_rect_roundtrip_preserves_values() {
     assert_eq!(parsed.width, 56);
     assert_eq!(parsed.height, 78);
 }
-
-
 
 #[test]
 fn freeze_module_does_not_depend_on_selector() {
@@ -204,8 +200,6 @@ fn selector_map_api_error_maps_non_cancel_to_failed() {
         }
     }
 }
-
-
 
 #[test]
 fn test_default_config() {
@@ -358,7 +352,7 @@ fn test_get_screenshots_dir_priority_cli() {
     let cli_path = Some(PathBuf::from("/cli/path"));
 
     unsafe {
-        env::set_var("HYPRSHOT_DIR", "/env/path");
+        env::set_var("HYSHOT_DIR", "/env/path");
     }
 
     let result = match crate::config::get_screenshots_dir(cli_path, &config, false) {
@@ -368,7 +362,7 @@ fn test_get_screenshots_dir_priority_cli() {
     assert_eq!(result, PathBuf::from("/cli/path"));
 
     unsafe {
-        env::remove_var("HYPRSHOT_DIR");
+        env::remove_var("HYSHOT_DIR");
     }
 }
 
@@ -377,7 +371,7 @@ fn test_get_screenshots_dir_priority_env() {
     let config = crate::config::Config::default();
 
     unsafe {
-        env::set_var("HYPRSHOT_DIR", "/env/path");
+        env::set_var("HYSHOT_DIR", "/env/path");
     }
 
     let result = match crate::config::get_screenshots_dir(None, &config, false) {
@@ -387,7 +381,7 @@ fn test_get_screenshots_dir_priority_env() {
     assert_eq!(result, PathBuf::from("/env/path"));
 
     unsafe {
-        env::remove_var("HYPRSHOT_DIR");
+        env::remove_var("HYSHOT_DIR");
     }
 }
 
@@ -418,5 +412,3 @@ fn test_get_screenshots_dir_with_tilde() {
     };
     assert_eq!(result, home.join("Screenshots"));
 }
-
-

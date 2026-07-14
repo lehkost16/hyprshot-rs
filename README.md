@@ -1,31 +1,29 @@
-[![Crates.io Version](https://img.shields.io/crates/v/hyprshot-rs.svg)](https://crates.io/crates/hyprshot-rs) [![Crates.io Downloads](https://img.shields.io/crates/d/hyprshot-rs.svg)](https://crates.io/crates/hyprshot-rs) [![AUR version](https://img.shields.io/aur/version/hyprshot-rs)](https://aur.archlinux.org/packages/hyprshot-rs) [![Crates.io License](https://img.shields.io/crates/l/hyprshot-rs.svg)](https://crates.io/crates/hyprshot-rs)
-
 ---
 
-# Shot (hyprshot-rs)
+# Hyshot (hyshot)
 
 <p align="center">
-  <img src="img/logo.svg" alt="Hyprshot-rs logo" width="200" />
+  <img src="img/logo.svg" alt="Hyshot logo" width="200" />
 </p>
 
 A modern, fast, and feature-rich screenshot and screen recording utility for Wayland (highly optimized for Hyprland and Sway), written in pure Rust.
 
-Unlike original projects that use shell wrappers, `shot` compiles to a single native binary, providing instant execution, region freezing, scroll stitching, and screen recording capabilities.
+Unlike original projects that use shell wrappers, `hyshot` compiles to a single native binary, providing instant execution, region freezing, scroll stitching, and screen recording capabilities.
 
 ## Features
 
 - **Screenshot Capture**
-  - `shot now` — Capture the current active monitor
-  - `shot win` — Capture the active or a selected window (via compositor tree traversal)
-  - `shot area` — Capture a selected screen region
-  - `shot satty` — Capture a selected region and edit it immediately using the Satty annotation tool
-  - `shot ocr` — Capture a selected region and perform OCR text recognition
-  - `shot in5` / `shot in10` — Capture the active monitor after a 5 or 10-second countdown delay
+  - `hyshot now` — Capture the current active monitor
+  - `hyshot win` — Capture the active or a selected window (via compositor tree traversal)
+  - `hyshot area` — Capture a selected screen region
+  - `hyshot satty` — Capture a selected region and edit it immediately using the Satty annotation tool
+  - `hyshot ocr` — Capture a selected region and perform OCR text recognition
+  - `hyshot in5` / `hyshot in10` — Capture the active monitor after a 5 or 10-second countdown delay
 - **Scrolling Screenshot (Longshot)**
-  - `shot longshot` — Toggle start/stop to capture a region and vertically stitch scrolled content into a single long image
+  - `hyshot longshot` — Toggle start/stop to capture a region and vertically stitch scrolled content into a single long image
   - Employs lossless RGB video capture for intermediate frames to ensure maximum stitching quality and accuracy
 - **Region Screen Recording (Record)**
-  - `shot record` — Toggle start/stop to record a selected region to a modern WebM video file (`.webm` using VP9 codec)
+  - `hyshot record` — Toggle start/stop to record a selected region to a modern WebM video file (`.webm` using VP9 codec)
   - A flashing neon-red selection overlay is automatically displayed to mark the recording area
   - Automatically copies the saved video path to the clipboard on completion
 - **Screen Freezing**
@@ -34,20 +32,20 @@ Unlike original projects that use shell wrappers, `shot` compiles to a single na
   - Saves captures to your configured screenshots directory (defaults to `~/Pictures` for images, `~/Videos/record` for recordings)
   - Use `--clipboard-only` to copy directly to the clipboard instead of writing to disk
 - **Configuration System**
-  - TOML-based configuration (`~/.config/hyprshot-rs/config.toml`)
+  - TOML-based configuration (`~/.config/hyshot/config.toml`)
   - Persistent settings for paths, notifications, satty/ocr commands, longshot, and recording configurations
 
 ## Installation
 
 ### Via Cargo:
 ```bash
-cargo install hyprshot-rs
+cargo install hyshot
 ```
 Selector functionality is provided natively via `slurp-rs`, so no external `slurp` binary is strictly required for screenshots.
 
 ### Via AUR (Arch Linux):
 ```bash
-yay -S hyprshot-rs
+yay -S hyshot
 ```
 
 ### Runtime Dependencies
@@ -64,83 +62,83 @@ yay -S hyprshot-rs
 
 ### Command Syntax
 ```bash
-shot [options ..] <command>
+hyshot [options ..] <command>
 ```
 
 ### Subcommands
 
 - Capture the active monitor:
   ```bash
-  shot now
+  hyshot now
   ```
 
 - Capture a window:
   ```bash
-  shot win
+  hyshot win
   ```
 
 - Capture a custom region:
   ```bash
-  shot area
+  hyshot area
   ```
 
 - Capture a region and edit with Satty:
   ```bash
-  shot satty
+  hyshot satty
   ```
 
 - Capture a region and perform OCR:
   ```bash
-  shot ocr
+  hyshot ocr
   ```
 
 - Scrolling Screenshot (Longshot):
   Start capture:
   ```bash
-  shot longshot
+  hyshot longshot
   ```
   Scroll down the target window/page, then run the command again to stop and save the stitched PNG:
   ```bash
-  shot longshot
+  hyshot longshot
   ```
 
 - Region Screen Recording (Record):
   Start recording:
   ```bash
-  shot record
+  hyshot record
   ```
   Perform your actions, then run the command again to stop. The WebM video will be saved in `~/Videos/record/` and its path will be copied to your clipboard:
   ```bash
-  shot record
+  hyshot record
   ```
 
 ---
 
 ## Configuration
 
-The configuration file is located at `~/.config/hyprshot-rs/config.toml`. You can initialize a default configuration, display the current configuration, or edit values.
+The configuration file is located at `~/.config/hyshot/config.toml`. You can initialize a default configuration, display the current configuration, or edit values.
 
 ### Commands
 
 - **Initialize default configuration**:
   ```bash
-  shot --init-config
+  hyshot --init-config
   ```
 
 - **Show current configuration**:
   ```bash
-  shot --show-config
+  hyshot --show-config
   ```
 
 - **Set a configuration value**:
   ```bash
-  shot --set <key> <value>
+  hyshot --set <key> <value>
   ```
   Example:
   ```bash
-  shot --set paths.screenshots_dir ~/Pictures/Screenshots
-  shot --set capture.jpeg_quality 95
-  shot --set record.fps 60
+  hyshot --set paths.screenshots_dir ~/Pictures/Screenshots
+  hyshot --set capture.jpeg_quality 95
+  hyshot --set record.fps 60
   ```
 
 ---
@@ -174,11 +172,11 @@ Here is a complete list of all available configuration sections and options:
   * *Default:* `0`
 
 #### `[satty]`
-* **`command`** (string) — External command to execute for annotations when using `shot satty`. `{path}` is replaced with the screenshot path.
+* **`command`** (string) — External command to execute for annotations when using `hyshot satty`. `{path}` is replaced with the screenshot path.
   * *Default:* `"satty --filename {path}"`
 
 #### `[ocr]`
-* **`command`** (string) — External OCR execution command used when running `shot ocr`. `{path}` is replaced with the screenshot path.
+* **`command`** (string) — External OCR execution command used when running `hyshot ocr`. `{path}` is replaced with the screenshot path.
   * *Default:* `"nbocr recognize -l chinese -d v6-tiny {path} -f text -t 8"`
 
 #### `[longshot]`

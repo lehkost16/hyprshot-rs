@@ -1,11 +1,11 @@
-# CLI Reference - hyprshot-rs
+# CLI Reference - hyshot
 
 This document lists CLI flags and mode semantics. For an overview and general examples, see [README.md](../README.md).
 
 ## Basic Usage
 
 ```bash
-hyprshot-rs [OPTIONS] -m <MODE> [-- COMMAND]
+hyshot [OPTIONS] -m <MODE> [-- COMMAND]
 ```
 
 ## Screenshot Modes
@@ -14,11 +14,11 @@ Specify one or more modes with `-m` / `--mode`:
 
 | Mode          | Description                                                             | Example                           |
 | ------------- | ----------------------------------------------------------------------- | --------------------------------- |
-| `region`      | Select a region with your mouse                                         | `hyprshot-rs -m region`           |
-| `window`      | Select a window                                                         | `hyprshot-rs -m window`           |
-| `output`      | Select a monitor                                                        | `hyprshot-rs -m output`           |
-| `active`      | Modifier: capture active window/monitor (use with `output` or `window`) | `hyprshot-rs -m window -m active` |
-| `OUTPUT_NAME` | Capture specific monitor by name                                        | `hyprshot-rs -m output -m DP-1`   |
+| `region`      | Select a region with your mouse                                         | `hyshot -m region`           |
+| `window`      | Select a window                                                         | `hyshot -m window`           |
+| `output`      | Select a monitor                                                        | `hyshot -m output`           |
+| `active`      | Modifier: capture active window/monitor (use with `output` or `window`) | `hyshot -m window -m active` |
+| `OUTPUT_NAME` | Capture specific monitor by name                                        | `hyshot -m output -m DP-1`   |
 
 Notes:
 - `active` must be combined with `output` or `window`.
@@ -90,7 +90,7 @@ For configuration fields, defaults, and path expansion details, see [CONFIGURATI
 Run a command after capture:
 
 ```bash
-hyprshot-rs -m region -- <command>
+hyshot -m region -- <command>
 ```
 
 The command is only executed when a file is saved (not with `--raw` or `--clipboard-only`).

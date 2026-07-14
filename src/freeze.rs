@@ -795,7 +795,7 @@ Check the support for this protocol on Hyprland/Sway/River/Wayfire."
                 &surface,
                 Some(&output.output),
                 Layer::Overlay,
-                "hyprshot-freeze".to_string(),
+                "hyshot-freeze".to_string(),
                 &qh,
                 SurfaceKey(surface_idx),
             );

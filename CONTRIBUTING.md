@@ -1,10 +1,10 @@
 # Contributing Guide
 
-Thanks for your interest in contributing to hyprshot-rs. This document explains
+Thanks for your interest in contributing to hyshot. This document explains
 how we work and what we expect for contributions to be accepted.
 
 ## Project Scope
-- hyprshot-rs is a Wayland screenshot tool.
+- hyshot is a Wayland screenshot tool.
 - It targets Wayland compositors (Hyprland, Sway; others best‑effort).
 - We prioritize small, predictable changes and low runtime overhead.
 

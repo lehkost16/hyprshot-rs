@@ -34,8 +34,6 @@ impl Geometry {
     pub fn from_slurp_rect(rect: &slurp_rs::Rect) -> Result<Self> {
         Self::new(rect.x, rect.y, rect.width, rect.height)
     }
-
-
 }
 
 impl FromStr for Geometry {

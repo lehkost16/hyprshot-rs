@@ -1,11 +1,11 @@
-# Configuration Guide - hyprshot-rs
+# Configuration Guide - hyshot
 
 Minimal configuration reference aligned with actual behavior.
 
 ## Overview
 
 - Config is a TOML file.
-- Priority: CLI args > `HYPRSHOT_DIR` env > config file > defaults.
+- Priority: CLI args > `HYSHOT_DIR` env > config file > defaults.
 - CLI config management is documented in `doc/CLI.md`.
 
 ## Configuration File Location
@@ -13,13 +13,13 @@ Minimal configuration reference aligned with actual behavior.
 Default path:
 
 ```
-~/.config/hyprshot-rs/config.toml
+~/.config/hyshot/config.toml
 ```
 
 Get the active path:
 
 ```bash
-hyprshot-rs --config-path
+hyshot --config-path
 ```
 
 ## Configuration Structure
@@ -69,7 +69,7 @@ Path expansion:
 
 Priority for save directory:
 1. `-o/--output-folder`
-2. `HYPRSHOT_DIR`
+2. `HYSHOT_DIR`
 3. `paths.screenshots_dir`
 4. `~/Pictures`
 

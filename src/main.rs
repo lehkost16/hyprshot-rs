@@ -9,12 +9,12 @@ mod config_cmds;
 mod freeze;
 mod geometry;
 
-mod save;
-mod selector;
-mod utils;
 mod external;
 mod longshot;
 mod record;
+mod save;
+mod selector;
+mod utils;
 pub use cli::{Args, Subcommands, default_filename, resolve_delay, resolve_notif_timeout};
 
 fn main() -> Result<()> {

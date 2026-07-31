@@ -143,6 +143,30 @@ fn set_config_value(config: &mut config::Config, key: &str, value: &str) -> Resu
                 value.parse().context("Value must be a float (e.g. 1.0)")?;
         }
 
+        // [record] section
+        ("record", "fps") => {
+            config.record.fps = value.parse().context("Value must be a positive integer")?;
+        }
+        ("record", "crf") => {
+            config.record.crf = value.parse().context("Value must be a positive integer (0-63)")?;
+        }
+        ("record", "save_dir") => {
+            config.record.save_dir = value.to_string();
+        }
+        ("record", "codec") => {
+            config.record.codec = value.to_string();
+        }
+        ("record", "format") => {
+            config.record.format = value.to_string();
+        }
+        ("record", "command_args") => {
+            if let Ok(args) = serde_json::from_str::<Vec<String>>(value) {
+                config.record.command_args = args;
+            } else {
+                config.record.command_args = value.split_whitespace().map(String::from).collect();
+            }
+        }
+
         _ => {
             return Err(anyhow::anyhow!(
                 "Unknown config key: {}.{}\n\nAvailable keys:\n\
@@ -163,7 +187,14 @@ fn set_config_value(config: &mut config::Config, key: &str, value: &str) -> Resu
                    - longshot.fps (integer)\n\
                    - longshot.match_threshold (float)\n\
                    - longshot.min_movement (integer)\n\
-                   - longshot.static_threshold (float)",
+                   - longshot.static_threshold (float)\n\
+                 Record:\n\
+                   - record.fps (integer)\n\
+                   - record.crf (integer, 0-63)\n\
+                   - record.save_dir (string)\n\
+                   - record.codec (string, e.g. libvpx-vp9, libx264)\n\
+                   - record.format (string, e.g. webm, mp4, mkv)\n\
+                   - record.command_args (array or space-separated string)",
                 section,
                 field
             ));

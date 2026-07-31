@@ -59,6 +59,19 @@ pub struct Args {
     pub set: Option<Vec<String>>,
 
     #[arg(
+        short,
+        long,
+        help = "Launch interactive configuration menu"
+    )]
+    pub interactive: bool,
+
+    #[arg(
+        long,
+        help = "Print recommended Hyprland shortcuts/binds configuration"
+    )]
+    pub print_binds: bool,
+
+    #[arg(
         long,
         help = "Don't load configuration file (use defaults and CLI args only)"
     )]

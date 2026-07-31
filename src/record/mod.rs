@@ -111,7 +111,11 @@ pub fn handle_record(args: &Args, config: &config::Config) -> Result<()> {
             .unwrap_or(("eDP-1".to_string(), 1.0, 0, 0));
         let scale = scale_f;
 
-        let filename = format!("record_{}.webm", Local::now().format("%Y-%m-%d-%H%M%S"));
+        let filename = format!(
+            "record_{}.{}",
+            Local::now().format("%Y-%m-%d-%H%M%S"),
+            config.record.format
+        );
         let video_path = save_dir.join(filename);
         let video_path_str = video_path.to_string_lossy().to_string();
 
@@ -122,12 +126,12 @@ pub fn handle_record(args: &Args, config: &config::Config) -> Result<()> {
             );
         }
 
-        // Spawn wf-recorder with standard recording parameters for WebM VP9
+        // Spawn wf-recorder with configured parameters
         let fps_arg = format!("fps={}", config.record.fps);
         let crf_arg = config.record.crf.to_string();
 
-        let rec_child = Command::new("wf-recorder")
-            .arg("-g")
+        let mut cmd = Command::new("wf-recorder");
+        cmd.arg("-g")
             .arg(format!(
                 "{},{} {}x{}",
                 geometry.x, geometry.y, geometry.width, geometry.height
@@ -135,13 +139,19 @@ pub fn handle_record(args: &Args, config: &config::Config) -> Result<()> {
             .arg("-f")
             .arg(&video_path_str)
             .arg("-c")
-            .arg("libvpx-vp9")
-            .arg("-p")
-            .arg(format!("crf={}", crf_arg))
-            .arg("-F")
+            .arg(&config.record.codec);
+
+        if config.record.codec == "libvpx-vp9" || config.record.codec == "libx264" {
+            cmd.arg("-p").arg(format!("crf={}", crf_arg));
+        }
+
+        cmd.arg("-F")
             .arg(&fps_arg)
+            .args(&config.record.command_args)
             .stdout(Stdio::null())
-            .stderr(Stdio::null())
+            .stderr(Stdio::null());
+
+        let rec_child = cmd
             .spawn()
             .context("Failed to spawn wf-recorder. Please ensure it is installed.")?;
         let rec_pid = rec_child.id();

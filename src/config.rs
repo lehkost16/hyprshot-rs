@@ -177,6 +177,23 @@ fn default_record_save_dir() -> String {
     "~/Videos/record".to_string()
 }
 
+fn default_record_codec() -> String {
+    "libvpx-vp9".to_string()
+}
+
+fn default_record_format() -> String {
+    "webm".to_string()
+}
+
+fn default_record_command_args() -> Vec<String> {
+    vec![
+        "-p".to_string(),
+        "cpu-used=8".to_string(),
+        "-p".to_string(),
+        "deadline=realtime".to_string(),
+    ]
+}
+
 fn default_file_type() -> String {
     "png".to_string()
 }
@@ -201,6 +218,19 @@ pub struct RecordConfig {
     /// Directory where video recordings will be saved. Default: ~/Videos/record
     #[serde(default = "default_record_save_dir")]
     pub save_dir: String,
+    /// Video encoder codec. Default: "libvpx-vp9"
+    /// For mp4 format, use "libx264"
+    #[serde(default = "default_record_codec")]
+    pub codec: String,
+    /// Output video format (determines file extension). Default: "webm"
+    /// Supported: "webm", "mp4", "mkv", "avi", etc. (must be a valid ffmpeg muxer)
+    #[serde(default = "default_record_format")]
+    pub format: String,
+    /// Additional custom arguments for wf-recorder.
+    /// Default: ["-p", "cpu-used=8", "-p", "deadline=realtime"]
+    /// For libx264, consider: ["-p", "preset=ultrafast", "-p", "tune=zerolatency"]
+    #[serde(default = "default_record_command_args")]
+    pub command_args: Vec<String>,
 }
 
 impl Default for RecordConfig {
@@ -209,6 +239,9 @@ impl Default for RecordConfig {
             fps: default_record_fps(),
             crf: default_record_crf(),
             save_dir: default_record_save_dir(),
+            codec: default_record_codec(),
+            format: default_record_format(),
+            command_args: default_record_command_args(),
         }
     }
 }
@@ -566,6 +599,15 @@ impl Config {
                 result.push_str("\n# Longshot (scrolling screenshot) settings\n");
             } else if line.starts_with("[record]") {
                 result.push_str("\n# Screen recording settings\n");
+                result.push_str("#\n");
+                result.push_str("# Format / codec pairing guide:\n");
+                result.push_str("#   - format=\"webm\" + codec=\"libvpx-vp9\" (default, VP9, CRF 0-63)\n");
+                result.push_str("#   - format=\"mp4\"  + codec=\"libx264\"     (H.264, CRF 0-51)\n");
+                result.push_str("#   - format=\"mkv\"  + codec=\"libvpx-vp9\" or \"libx264\"\n");
+                result.push_str("#\n");
+                result.push_str("# When switching to mp4/libx264, also update command_args, e.g.:\n");
+                result.push_str("#   command_args = [\"-p\", \"preset=ultrafast\", \"-p\", \"tune=zerolatency\"]\n");
+                result.push_str("# The default command_args (cpu-used=8, deadline=realtime) are VP9-only.\n");
             }
 
             result.push_str(line);

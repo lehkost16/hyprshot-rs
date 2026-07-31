@@ -42,8 +42,8 @@ fn extract_stripe(gray: &[u8], w: usize, h: usize, stripe_w: usize) -> (Vec<u8>,
 }
 
 fn match_template_vertical(
-    curr: &[u8],
-    temp: &[u8],
+    curr: &[f32],
+    temp: &[f32],
     w: usize,
     h: usize,
     h_temp: usize,
@@ -51,14 +51,11 @@ fn match_template_vertical(
 ) -> (f32, usize) {
     let n = w * h_temp;
 
-    // Convert template to f32 once
-    let temp_f32: Vec<f32> = temp.iter().map(|&x| x as f32).collect();
-
     // Mean of template
-    let sum_t: f32 = temp_f32.iter().sum();
+    let sum_t: f32 = temp.iter().sum();
     let mean_t = sum_t / n as f32;
     let mut sq_sum_t: f32 = 0.0;
-    for &x in &temp_f32 {
+    for &x in temp {
         let diff = x - mean_t;
         sq_sum_t += diff * diff;
     }
@@ -84,14 +81,14 @@ fn match_template_vertical(
         let offset = y * w;
         let patch = &curr[offset..offset + n];
 
-        let sum_p: f32 = patch.iter().map(|&x| x as f32).sum();
+        let sum_p: f32 = patch.iter().sum();
         let mean_p = sum_p / n as f32;
 
         let mut sum_pt: f32 = 0.0;
         let mut sum_p2: f32 = 0.0;
         for i in 0..n {
-            let p = patch[i] as f32;
-            let t = temp_f32[i];
+            let p = patch[i];
+            let t = temp[i];
             sum_pt += p * t;
             sum_p2 += p * p;
         }
@@ -223,7 +220,7 @@ pub fn stitch_video(
 
     let mut result_rgb: Vec<u8> = Vec::new();
     let mut prev_gray: Vec<u8> = Vec::new();
-    let mut prev_stripe: Vec<u8> = Vec::new();
+    let mut prev_stripe: Vec<f32> = Vec::new();
     let mut sw = 0usize;
 
     let mut frame_count = 0;
@@ -259,7 +256,7 @@ pub fn stitch_video(
             // First frame: append entirely
             result_rgb.extend_from_slice(&curr_rgb);
             let (stripe, stripe_w) = extract_stripe(&curr_gray, w_cropped, h_cropped, 300);
-            prev_stripe = stripe;
+            prev_stripe = stripe.iter().map(|&x| x as f32).collect();
             sw = stripe_w;
             prev_gray = curr_gray;
             continue;
@@ -271,7 +268,8 @@ pub fn stitch_video(
             continue;
         }
 
-        let (curr_stripe, _) = extract_stripe(&curr_gray, w_cropped, h_cropped, 300);
+        let (curr_stripe_u8, _) = extract_stripe(&curr_gray, w_cropped, h_cropped, 300);
+        let curr_stripe: Vec<f32> = curr_stripe_u8.iter().map(|&x| x as f32).collect();
 
         // Try Bottom-to-Bottom matching
         let temp_bottom = &prev_stripe[(h_cropped - bottom_th) * sw..h_cropped * sw];

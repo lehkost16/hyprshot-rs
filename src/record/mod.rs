@@ -23,6 +23,8 @@ struct RecordState {
     pid: u32,
     overlay_pid: u32,
     video_path: String,
+    #[serde(default)]
+    temp_video_path: Option<String>,
 }
 
 fn is_process_running(pid: u32) -> bool {
@@ -71,30 +73,79 @@ pub fn handle_record(args: &Args, config: &config::Config) -> Result<()> {
         // Delete state file
         let _ = fs::remove_file(&state_file);
 
-        // Copy the output video path to clipboard
+        let mut final_path = state.video_path.clone();
+        let mut conversion_succeeded = false;
+
+        if let Some(ref temp_path) = state.temp_video_path {
+            if debug {
+                eprintln!("Converting temporary video {} to GIF {}", temp_path, state.video_path);
+            }
+            if !silent {
+                let _ = Notification::new()
+                    .summary("🎥 正在转换GIF...")
+                    .body("录像已结束，正在生成高质量GIF，请稍候...")
+                    .timeout(notif_timeout as i32)
+                    .appname("Shot")
+                    .show();
+            }
+
+            let ffmpeg_status = Command::new("ffmpeg")
+                .arg("-y")
+                .arg("-i").arg(temp_path)
+                .arg("-vf").arg("fps=15,scale=flags=lanczos,split[s0][s1];[s0]palettegen[p];[s1][p]paletteuse")
+                .arg(&state.video_path)
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status();
+
+            match ffmpeg_status {
+                Ok(status) if status.success() => {
+                    conversion_succeeded = true;
+                    // Delete intermediate file
+                    let _ = fs::remove_file(temp_path);
+                    if debug {
+                        eprintln!("GIF conversion succeeded, deleted temp file.");
+                    }
+                }
+                other => {
+                    eprintln!("Warning: ffmpeg conversion failed or returned error: {:?}", other);
+                    // Fallback to original webm
+                    final_path = temp_path.clone();
+                }
+            }
+        }
+
+        // Copy the output path to clipboard
         let wl_copy_cmd = Command::new("wl-copy").stdin(Stdio::piped()).spawn();
         if let Ok(mut child) = wl_copy_cmd {
             if let Some(mut stdin) = child.stdin.take() {
-                let _ = stdin.write_all(state.video_path.as_bytes());
+                let _ = stdin.write_all(final_path.as_bytes());
             }
             let _ = child.wait();
         }
 
         // Send success notification
         if !silent {
+            let (summary, body) = if state.temp_video_path.is_some() {
+                if conversion_succeeded {
+                    ("🎥 GIF已生成".to_string(), format!("GIF已保存至: {}\n路径已复制到剪贴板", final_path))
+                } else {
+                    ("🎥 GIF转换失败".to_string(), format!("转换失败，原视频已保存至: {}\n路径已复制到剪贴板", final_path))
+                }
+            } else {
+                ("🎥 录屏已完成".to_string(), format!("视频已保存至: {}\n路径已复制到剪贴板", final_path))
+            };
+
             let _ = Notification::new()
-                .summary("🎥 录屏已完成")
-                .body(&format!(
-                    "视频已保存至: {}\n路径已复制到剪贴板",
-                    state.video_path
-                ))
+                .summary(&summary)
+                .body(&body)
                 .timeout(notif_timeout as i32)
                 .appname("Shot")
                 .show();
         }
 
         if debug {
-            eprintln!("Recording stopped. File: {}", state.video_path);
+            eprintln!("Recording stopped. File: {}", final_path);
         }
 
         Ok(())
@@ -119,10 +170,22 @@ pub fn handle_record(args: &Args, config: &config::Config) -> Result<()> {
         let video_path = save_dir.join(filename);
         let video_path_str = video_path.to_string_lossy().to_string();
 
+        let is_gif = config.record.format == "gif";
+        let intermediate_ext = if config.record.codec.contains("vp9") || config.record.codec.contains("vp8") {
+            "webm"
+        } else {
+            "mp4"
+        };
+        let record_path_str = if is_gif {
+            video_path.with_extension(intermediate_ext).to_string_lossy().to_string()
+        } else {
+            video_path_str.clone()
+        };
+
         if debug {
             eprintln!(
-                "Starting screen recording. Video: {}, Region: {:?}, Scale: {}",
-                video_path_str, geometry, scale
+                "Starting screen recording. Target File: {}, Recording File: {}, Region: {:?}, Scale: {}",
+                video_path_str, record_path_str, geometry, scale
             );
         }
 
@@ -137,11 +200,23 @@ pub fn handle_record(args: &Args, config: &config::Config) -> Result<()> {
                 geometry.x, geometry.y, geometry.width, geometry.height
             ))
             .arg("-f")
-            .arg(&video_path_str)
-            .arg("-c")
-            .arg(&config.record.codec);
+            .arg(&record_path_str);
 
-        if config.record.codec == "libvpx-vp9" || config.record.codec == "libx264" {
+        // Handle GPU hardware acceleration
+        let mut codec = config.record.codec.clone();
+        if config.record.hwaccel == "vaapi" {
+            cmd.arg("-d").arg("/dev/dri/renderD128");
+            if !codec.contains("vaapi") {
+                codec = "h264_vaapi".to_string();
+            }
+        } else if config.record.hwaccel == "nvenc" {
+            if !codec.contains("nvenc") {
+                codec = "h264_nvenc".to_string();
+            }
+        }
+        cmd.arg("-c").arg(&codec);
+
+        if codec == "libvpx-vp9" || codec == "libx264" {
             cmd.arg("-p").arg(format!("crf={}", crf_arg));
         }
 
@@ -190,6 +265,7 @@ pub fn handle_record(args: &Args, config: &config::Config) -> Result<()> {
             pid: rec_pid,
             overlay_pid,
             video_path: video_path_str,
+            temp_video_path: if is_gif { Some(record_path_str) } else { None },
         };
         let state_json =
             serde_json::to_string_pretty(&state).context("Failed to serialize state to JSON")?;

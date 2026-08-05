@@ -16,7 +16,7 @@ Unlike original projects that use shell wrappers, `hyshot` compiles to a single 
   - `hyshot now` — Capture the current active monitor
   - `hyshot win` — Capture the active or a selected window (via compositor tree traversal)
   - `hyshot area` — Capture a selected screen region
-  - `hyshot satty` — Capture a selected region and edit it immediately using the Satty annotation tool
+  - `hyshot annotate` — Capture a selected region and open it immediately using the configured annotation tool
   - `hyshot ocr` — Capture a selected region and perform OCR text recognition
   - `hyshot in5` / `hyshot in10` — Capture the active monitor after a 5 or 10-second countdown delay
 - **Scrolling Screenshot (Longshot)**
@@ -33,7 +33,7 @@ Unlike original projects that use shell wrappers, `hyshot` compiles to a single 
   - Use `--clipboard-only` to copy directly to the clipboard instead of writing to disk
 - **Configuration System**
   - TOML-based configuration (`~/.config/hyshot/config.toml`)
-  - Persistent settings for paths, notifications, satty/ocr commands, longshot, and recording configurations
+  - Persistent settings for paths, notifications, annotate/ocr commands, longshot, and recording configurations
 
 ## Installation
 
@@ -82,9 +82,9 @@ hyshot [options ..] <command>
   hyshot area
   ```
 
-- Capture a region and edit with Satty:
+- Capture a region and open in annotation tool:
   ```bash
-  hyshot satty
+  hyshot annotate
   ```
 
 - Capture a region and perform OCR:
@@ -130,6 +130,13 @@ The configuration file is located at `~/.config/hyshot/config.toml`. You can ini
   hyshot --show-config
   ```
 
+- **Launch interactive configuration menu**:
+  ```bash
+  hyshot -i
+  # or
+  hyshot --interactive
+  ```
+
 - **Set a configuration value**:
   ```bash
   hyshot --set <key> <value>
@@ -171,8 +178,8 @@ Here is a complete list of all available configuration sections and options:
 * **`delay_ms`** (integer) — Global delay before capturing in milliseconds.
   * *Default:* `0`
 
-#### `[satty]`
-* **`command`** (string) — External command to execute for annotations when using `hyshot satty`. `{path}` is replaced with the screenshot path.
+#### `[annotate]`
+* **`command`** (string) — External command to execute for annotations when using `hyshot annotate`. `{path}` is replaced with the screenshot path.
   * *Default:* `"satty --filename {path}"`
 
 #### `[ocr]`
@@ -192,8 +199,16 @@ Here is a complete list of all available configuration sections and options:
 #### `[record]`
 * **`fps`** (integer) — Frame rate for screen recording.
   * *Default:* `30`
-* **`crf`** (integer) — Constant Rate Factor (CRF) quality setting for WebM/VP9 video recording (range `0` to `63`). Lower values yield higher quality, `0` is lossless.
-  * *Default:* `25` (improved for higher quality, down from 32)
+* **`crf`** (integer) — Constant Rate Factor (CRF) quality setting.
+  * *Default:* `25`
+* **`save_dir`** (string) — Directory to save recorded videos.
+  * *Default:* `"~/Videos/record"`
+* **`codec`** (string) — Video encoder codec.
+  * *Default:* `"libvpx-vp9"`
+* **`format`** (string) — Video format (file extension).
+  * *Default:* `"webm"`
+* **`hwaccel`** (string) — GPU hardware acceleration API. Options: `"none"`, `"vaapi"`, `"nvenc"`.
+  * *Default:* `"none"`
 
 ## License
 

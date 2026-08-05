@@ -15,7 +15,7 @@ pub struct Config {
     #[serde(default)]
     pub advanced: AdvancedConfig,
     #[serde(default)]
-    pub satty: SattyConfig,
+    pub annotate: AnnotateConfig,
     #[serde(default)]
     pub ocr: OcrConfig,
     #[serde(default)]
@@ -65,6 +65,11 @@ pub struct CaptureConfig {
     /// Default: 6
     #[serde(default = "default_png_level")]
     pub png_level: u32,
+
+    /// Command to upload screenshots
+    /// Default: ""
+    #[serde(default = "default_upload_command")]
+    pub upload_command: String,
 }
 
 /// Advanced configuration options
@@ -81,11 +86,11 @@ pub struct AdvancedConfig {
     pub delay_ms: u32,
 }
 
-/// Configuration for screenshot editing tool
+/// Configuration for screenshot editing/annotation tool
 #[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct SattyConfig {
+pub struct AnnotateConfig {
     /// Command to edit/annotate screenshot
-    #[serde(default = "default_satty_command")]
+    #[serde(default = "default_annotate_command")]
     pub command: String,
 }
 
@@ -101,28 +106,32 @@ pub struct OcrConfig {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct LongshotConfig {
     /// Frame rate for recording longshot
-    /// Default: 15
+    /// Default: 30
     #[serde(default = "default_longshot_fps")]
     pub fps: u32,
 
-    /// Match threshold for image stitching (0.0 to 1.0)
-    /// Default: 0.8
-    #[serde(default = "default_longshot_match_threshold")]
-    pub match_threshold: f32,
+    /// Column SAD threshold for accepting a frame match (lower = stricter).
+    /// Good range: 5.0–15.0. Default: 8.0
+    #[serde(default = "default_longshot_sad_threshold")]
+    pub sad_threshold: f32,
 
-    /// Minimum movement in pixels to consider as new scrolled content
-    /// Default: 5
-    #[serde(default = "default_longshot_min_movement")]
-    pub min_movement: i32,
+    /// Maximum frames to skip when velocity is high.
+    /// Default: 6
+    #[serde(default = "default_longshot_max_skip")]
+    pub max_skip: usize,
 
-    /// L1 difference threshold to detect static frames
-    /// Default: 1.0
-    #[serde(default = "default_longshot_static_threshold")]
-    pub static_threshold: f32,
+    /// Target overlap as fraction of frame height (used for skip prediction).
+    /// Default: 0.30
+    #[serde(default = "default_longshot_target_overlap")]
+    pub target_overlap: f32,
 }
 
 // Default value functions for serde
-fn default_satty_command() -> String {
+fn default_upload_command() -> String {
+    "".to_string()
+}
+
+fn default_annotate_command() -> String {
     "satty --filename {path}".to_string()
 }
 
@@ -154,16 +163,16 @@ fn default_longshot_fps() -> u32 {
     30
 }
 
-fn default_longshot_match_threshold() -> f32 {
-    0.8
+fn default_longshot_sad_threshold() -> f32 {
+    8.0
 }
 
-fn default_longshot_min_movement() -> i32 {
-    2
+fn default_longshot_max_skip() -> usize {
+    6
 }
 
-fn default_longshot_static_threshold() -> f32 {
-    1.0
+fn default_longshot_target_overlap() -> f32 {
+    0.30
 }
 
 fn default_record_fps() -> u32 {
@@ -183,6 +192,10 @@ fn default_record_codec() -> String {
 
 fn default_record_format() -> String {
     "webm".to_string()
+}
+
+fn default_record_hwaccel() -> String {
+    "none".to_string()
 }
 
 fn default_record_command_args() -> Vec<String> {
@@ -226,6 +239,10 @@ pub struct RecordConfig {
     /// Supported: "webm", "mp4", "mkv", "avi", etc. (must be a valid ffmpeg muxer)
     #[serde(default = "default_record_format")]
     pub format: String,
+    /// Hardware acceleration API. Default: "none"
+    /// Options: "none", "vaapi", "nvenc"
+    #[serde(default = "default_record_hwaccel")]
+    pub hwaccel: String,
     /// Additional custom arguments for wf-recorder.
     /// Default: ["-p", "cpu-used=8", "-p", "deadline=realtime"]
     /// For libx264, consider: ["-p", "preset=ultrafast", "-p", "tune=zerolatency"]
@@ -241,6 +258,7 @@ impl Default for RecordConfig {
             save_dir: default_record_save_dir(),
             codec: default_record_codec(),
             format: default_record_format(),
+            hwaccel: default_record_hwaccel(),
             command_args: default_record_command_args(),
         }
     }
@@ -263,6 +281,7 @@ impl Default for CaptureConfig {
             file_type: default_file_type(),
             jpeg_quality: default_jpeg_quality(),
             png_level: default_png_level(),
+            upload_command: default_upload_command(),
         }
     }
 }
@@ -271,9 +290,9 @@ impl Default for LongshotConfig {
     fn default() -> Self {
         Self {
             fps: default_longshot_fps(),
-            match_threshold: default_longshot_match_threshold(),
-            min_movement: default_longshot_min_movement(),
-            static_threshold: default_longshot_static_threshold(),
+            sad_threshold: default_longshot_sad_threshold(),
+            max_skip: default_longshot_max_skip(),
+            target_overlap: default_longshot_target_overlap(),
         }
     }
 }
@@ -287,10 +306,10 @@ impl Default for AdvancedConfig {
     }
 }
 
-impl Default for SattyConfig {
+impl Default for AnnotateConfig {
     fn default() -> Self {
         Self {
-            command: default_satty_command(),
+            command: default_annotate_command(),
         }
     }
 }
@@ -310,7 +329,7 @@ impl Default for Config {
             paths: PathsConfig::default(),
             capture: CaptureConfig::default(),
             advanced: AdvancedConfig::default(),
-            satty: SattyConfig::default(),
+            annotate: AnnotateConfig::default(),
             ocr: OcrConfig::default(),
             longshot: LongshotConfig::default(),
             record: RecordConfig::default(),
@@ -589,10 +608,12 @@ impl Config {
                 result.push_str("# Paths configuration\n");
             } else if line.starts_with("[capture]") {
                 result.push_str("\n# Capture settings\n");
+            } else if line.starts_with("upload_command =") {
+                result.push_str("# Command to upload screenshots (e.g. \"curl -F 'file=@{path}' https://tmp.link/\")\n");
             } else if line.starts_with("[advanced]") {
                 result.push_str("\n# Advanced settings\n");
-            } else if line.starts_with("[satty]") {
-                result.push_str("\n# Satty annotation tool settings\n");
+            } else if line.starts_with("[annotate]") {
+                result.push_str("\n# Annotation tool settings\n");
             } else if line.starts_with("[ocr]") {
                 result.push_str("\n# OCR tool settings\n");
             } else if line.starts_with("[longshot]") {

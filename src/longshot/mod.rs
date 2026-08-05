@@ -204,6 +204,7 @@ pub fn handle_longshot(args: &Args, config: &config::Config) -> Result<()> {
             .arg("crf=0")
             .arg("-F")
             .arg(&fps_arg)
+            .arg("--no-cursor")
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()
@@ -265,4 +266,78 @@ pub fn handle_longshot(args: &Args, config: &config::Config) -> Result<()> {
 
         Ok(())
     }
+}
+
+/// Directly stitch an existing video file into a long screenshot.
+pub fn handle_stitch(
+    input: std::path::PathBuf,
+    output: Option<std::path::PathBuf>,
+    width: Option<i32>,
+    height: Option<i32>,
+    scale: f64,
+    config: &config::Config,
+    debug: bool,
+    silent: bool,
+    notif_timeout: Option<u32>,
+) -> Result<()> {
+    if !input.exists() {
+        anyhow::bail!("Video file not found: {}", input.display());
+    }
+
+    let output_path = match output {
+        Some(p) => p,
+        None => {
+            let mut p = input.clone();
+            p.set_extension("png");
+            p
+        }
+    };
+
+    let (w, h) = match (width, height) {
+        (Some(w), Some(h)) => (w, h),
+        _ => {
+            stitcher::get_video_dimensions(&input)
+                .map(|(pw, ph)| (pw as i32, ph as i32))
+                .unwrap_or_else(|_| (1920, 1080))
+        }
+    };
+
+    if !silent {
+        let _ = Notification::new()
+            .summary("Stitching video...")
+            .body(&format!("{} → {}", input.display(), output_path.display()))
+            .timeout(3000)
+            .appname("Shot")
+            .show();
+    }
+
+    stitcher::stitch_video(&input, &output_path, w, h, scale, debug, config)?;
+
+    if let Ok(png_bytes) = std::fs::read(&output_path) {
+        let wl_copy_cmd = std::process::Command::new("wl-copy")
+            .arg("--type")
+            .arg("image/png")
+            .stdin(std::process::Stdio::piped())
+            .spawn();
+        if let Ok(mut child) = wl_copy_cmd {
+            use std::io::Write;
+            if let Some(mut stdin) = child.stdin.take() {
+                let _ = stdin.write_all(&png_bytes);
+            }
+            let _ = child.wait();
+        }
+    }
+
+    if !silent {
+        let timeout = notif_timeout.unwrap_or(3000);
+        let _ = Notification::new()
+            .summary("✅ 拼接完成")
+            .body(&format!("长图已保存至: {}", output_path.display()))
+            .icon(output_path.to_string_lossy().as_ref())
+            .timeout(timeout as i32)
+            .appname("Shot")
+            .show();
+    }
+
+    Ok(())
 }

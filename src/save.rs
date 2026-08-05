@@ -18,6 +18,8 @@ pub fn save_geometry_with_grim(
     notif_timeout: u32,
     debug: bool,
     png_bytes: Option<Vec<u8>>,
+    upload: bool,
+    upload_command: &str,
 ) -> Result<()> {
     use std::io::Write;
 
@@ -91,14 +93,69 @@ pub fn save_geometry_with_grim(
         std::mem::drop(wl_copy);
     }
 
-    if !silent {
-        let message = if clipboard_only {
-            "Image copied to the clipboard".to_string()
+    let mut uploaded_url: Option<String> = None;
+    if upload && !clipboard_only && !raw {
+        if upload_command.is_empty() {
+            eprintln!("Warning: Upload command is not configured in hyshot config file.");
+            if !silent {
+                let _ = Notification::new()
+                    .summary("上传未配置")
+                    .body("请在配置文件中设置 capture.upload_command")
+                    .timeout(notif_timeout as i32)
+                    .appname("Hyshot")
+                    .show();
+            }
         } else {
-            format!(
+            let cmd_str = upload_command.replace("{path}", &save_fullpath.to_string_lossy());
+            if debug {
+                eprintln!("Running upload command: {}", cmd_str);
+            }
+            let upload_res = Command::new("sh")
+                .arg("-c")
+                .arg(&cmd_str)
+                .output();
+            match upload_res {
+                Ok(output) if output.status.success() => {
+                    let stdout_str = String::from_utf8_lossy(&output.stdout);
+                    if debug {
+                        eprintln!("Upload output: {}", stdout_str);
+                    }
+                    if let Some(url) = extract_url(&stdout_str) {
+                        // Copy URL to clipboard
+                        let wl_copy_res = Command::new("wl-copy")
+                            .stdin(Stdio::piped())
+                            .spawn();
+                        if let Ok(mut child) = wl_copy_res {
+                            if let Some(mut stdin) = child.stdin.take() {
+                                let _ = stdin.write_all(url.as_bytes());
+                            }
+                            let _ = child.wait();
+                        }
+                        uploaded_url = Some(url);
+                    } else {
+                        eprintln!("Warning: Could not extract URL from upload command output.");
+                    }
+                }
+                Ok(output) => {
+                    eprintln!("Warning: Upload command failed with exit status: {:?}", output.status);
+                }
+                Err(e) => {
+                    eprintln!("Warning: Failed to execute upload command: {}", e);
+                }
+            }
+        }
+    }
+
+    if !silent {
+        let (summary, message) = if let Some(ref url) = uploaded_url {
+            ("上传完成".to_string(), format!("图片链接已复制到剪贴板:\n{}", url))
+        } else if clipboard_only {
+            ("Screenshot saved".to_string(), "Image copied to the clipboard".to_string())
+        } else {
+            ("Screenshot saved".to_string(), format!(
                 "Image saved in <i>{}</i> and copied to the clipboard.",
                 save_fullpath.display()
-            )
+            ))
         };
         let icon_name = if clipboard_only {
             "edit-paste".to_string()
@@ -106,7 +163,7 @@ pub fn save_geometry_with_grim(
             save_fullpath.to_str().unwrap_or("screenshot").to_string()
         };
         if let Err(err) = Notification::new()
-            .summary("Screenshot saved")
+            .summary(&summary)
             .body(&message)
             .icon(&icon_name)
             .timeout(notif_timeout as i32)
@@ -120,6 +177,17 @@ pub fn save_geometry_with_grim(
     Ok(())
 }
 
+fn extract_url(text: &str) -> Option<String> {
+    let start_idx = text.find("http://").or_else(|| text.find("https://"))?;
+    let rest = &text[start_idx..];
+    let end_idx = rest.find(|c: char| c.is_whitespace() || c == '"' || c == '\'' || c == '<' || c == '>' || c == '\\');
+    let url = match end_idx {
+        Some(i) => &rest[..i],
+        None => rest,
+    };
+    Some(url.trim().to_string())
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn save_geometry(
     geometry: &Geometry,
@@ -131,6 +199,8 @@ pub fn save_geometry(
     notif_timeout: u32,
     debug: bool,
     png_bytes: Option<Vec<u8>>,
+    upload: bool,
+    upload_command: &str,
 ) -> Result<()> {
     #[cfg(feature = "grim")]
     return save_geometry_with_grim(
@@ -143,7 +213,34 @@ pub fn save_geometry(
         notif_timeout,
         debug,
         png_bytes,
+        upload,
+        upload_command,
     );
     #[cfg(not(feature = "grim"))]
     compile_error!("Feature 'grim' must be enabled to save screenshots");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_extract_url() {
+        assert_eq!(
+            extract_url("https://tmp.link/f/123456"),
+            Some("https://tmp.link/f/123456".to_string())
+        );
+        assert_eq!(
+            extract_url("{\"url\": \"https://tmp.link/f/123456\"}"),
+            Some("https://tmp.link/f/123456".to_string())
+        );
+        assert_eq!(
+            extract_url("Upload finished. Link: http://example.com/image.png\nThank you!"),
+            Some("http://example.com/image.png".to_string())
+        );
+        assert_eq!(
+            extract_url("some text without url"),
+            None
+        );
+    }
 }

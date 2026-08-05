@@ -9,6 +9,7 @@ use crate::cli::{Args, Subcommands, default_filename, resolve_delay, resolve_not
 use crate::config;
 use crate::config_cmds::{
     handle_config_path, handle_init_config, handle_set_config, handle_show_config,
+    handle_interactive_config, handle_print_binds,
 };
 use crate::external;
 use crate::freeze;
@@ -33,6 +34,14 @@ pub fn run(mut args: Args) -> Result<()> {
 
     if let Some(ref set_args) = args.set {
         return handle_set_config(set_args);
+    }
+
+    if args.interactive {
+        return handle_interactive_config();
+    }
+
+    if args.print_binds {
+        return handle_print_binds();
     }
 
     // If overlay subcommand, run it directly without loading config or other logic
@@ -82,134 +91,150 @@ pub fn run(mut args: Args) -> Result<()> {
     };
 
     match subcommand {
-        Subcommands::Satty => {
-            return external::run_external_screenshot_tool(&args, &config, false);
+        Subcommands::Annotate => {
+            external::run_external_screenshot_tool(&args, &config, false)
         }
         Subcommands::Ocr => {
-            return external::run_external_screenshot_tool(&args, &config, true);
+            external::run_external_screenshot_tool(&args, &config, true)
         }
         Subcommands::Longshot => {
-            return longshot::handle_longshot(&args, &config);
+            longshot::handle_longshot(&args, &config)
+        }
+        Subcommands::Stitch { input, output, width, height, scale } => {
+            longshot::handle_stitch(input.clone(), output.clone(), width, height, scale, &config, args.debug, args.silent, args.notif_timeout)
         }
         Subcommands::Record => {
-            return record::handle_record(&args, &config);
+            record::handle_record(&args, &config)
         }
         Subcommands::Now
         | Subcommands::Win
         | Subcommands::Area
         | Subcommands::In5
         | Subcommands::In10 => {
-            let debug = args.debug;
-            let clipboard_only = args.clipboard_only || !config.capture.save_file;
-            let raw = args.raw;
-
-            // Handle countdown / delay
-            match subcommand {
-                Subcommands::In5 => {
-                    countdown(5, silent);
-                }
-                Subcommands::In10 => {
-                    countdown(10, silent);
-                }
-                _ => {
-                    let delay = resolve_delay(&args, &config);
-                    if delay > Duration::from_secs(0) {
-                        sleep(delay);
-                    }
-                }
-            }
-
-            let mut hyprctl_cache = capture::HyprctlCache::new();
-
-            // Start freeze overlay if region mode
-            let is_region = matches!(subcommand, Subcommands::Area);
-            let freeze = is_region && (args.freeze || config.advanced.freeze_on_region);
-
-            let (_monitor_name, _, _, _) =
-                external::get_active_monitor_info(debug).unwrap_or(("".to_string(), 1.0, 0, 0));
-
-            let freeze_guard = if freeze {
-                if debug {
-                    eprintln!("Freeze requested: starting overlay thread");
-                }
-                let guard = freeze::start_freeze(None, debug)?;
-                if debug {
-                    eprintln!("Freeze guard acquired");
-                }
-                Some(guard)
-            } else {
-                None
-            };
-
-            let geometry = match subcommand {
-                Subcommands::Now | Subcommands::In5 | Subcommands::In10 => {
-                    capture::grab_active_output(debug, &mut hyprctl_cache)?
-                }
-                Subcommands::Area => match capture::grab_region(debug) {
-                    Ok(geo) => geo,
-                    Err(err) => {
-                        if !silent && capture::is_region_selection_cancelled(&err) {
-                            let _ = Notification::new()
-                                .summary("Region mode")
-                                .body("Drag to select an area.")
-                                .appname("Shot")
-                                .timeout(notif_timeout as i32)
-                                .show();
-                        }
-                        return Err(err);
-                    }
-                },
-                Subcommands::Win => {
-                    let geo = capture::grab_window(debug, &mut hyprctl_cache)?;
-                    utils::trim(&geo, debug)?
-                }
-                _ => unreachable!(),
-            };
-
-            let png_bytes = if freeze_guard.is_some() {
-                if debug {
-                    eprintln!(
-                        "Capture region BEFORE stopping freeze overlay to preserve transient windows (like tooltips)"
-                    );
-                }
-                let bytes = crate::utils::capture_region_with_grim_cli(&geometry)?;
-                Some(bytes)
-            } else {
-                None
-            };
-
-            if let Some(guard) = freeze_guard {
-                guard.stop()?;
-                std::thread::sleep(std::time::Duration::from_millis(150));
-            } else {
-                std::thread::sleep(std::time::Duration::from_millis(150));
-            }
-
-            let save_dir = config::get_screenshots_dir(args.output_folder.clone(), &config, debug)?;
-            let save_dir = if !clipboard_only && !raw {
-                config::ensure_directory(&save_dir.to_string_lossy())?
-            } else {
-                save_dir
-            };
-            let filename = args
-                .filename
-                .unwrap_or_else(|| default_filename(Local::now()));
-            let save_fullpath = save_dir.join(&filename);
-
-            save::save_geometry(
-                &geometry,
-                &save_fullpath,
-                clipboard_only,
-                raw,
-                None, // custom external command is run in Edit mode
-                silent,
-                notif_timeout,
-                debug,
-                png_bytes,
-            )?;
+            run_screenshot_capture(subcommand, &args, &config, silent, notif_timeout)
         }
         Subcommands::Overlay { .. } => unreachable!(),
     }
+}
+
+fn run_screenshot_capture(
+    subcommand: Subcommands,
+    args: &Args,
+    config: &config::Config,
+    silent: bool,
+    notif_timeout: u32,
+) -> Result<()> {
+    let debug = args.debug;
+    let clipboard_only = args.clipboard_only || !config.capture.save_file;
+    let raw = args.raw;
+
+    // Handle countdown / delay
+    match subcommand {
+        Subcommands::In5 => {
+            countdown(5, silent);
+        }
+        Subcommands::In10 => {
+            countdown(10, silent);
+        }
+        _ => {
+            let delay = resolve_delay(args, config);
+            if delay > Duration::from_secs(0) {
+                sleep(delay);
+            }
+        }
+    }
+
+    let mut hyprctl_cache = capture::HyprctlCache::new();
+
+    // Start freeze overlay if region mode
+    let is_region = matches!(subcommand, Subcommands::Area);
+    let freeze = is_region && (args.freeze || config.advanced.freeze_on_region);
+
+    let (_monitor_name, _, _, _) =
+        external::get_active_monitor_info(debug).unwrap_or(("".to_string(), 1.0, 0, 0));
+
+    let freeze_guard = if freeze {
+        if debug {
+            eprintln!("Freeze requested: starting overlay thread");
+        }
+        let guard = freeze::start_freeze(None, debug)?;
+        if debug {
+            eprintln!("Freeze guard acquired");
+        }
+        Some(guard)
+    } else {
+        None
+    };
+
+    let geometry = match subcommand {
+        Subcommands::Now | Subcommands::In5 | Subcommands::In10 => {
+            capture::grab_active_output(debug, &mut hyprctl_cache)?
+        }
+        Subcommands::Area => match capture::grab_region(debug) {
+            Ok(geo) => geo,
+            Err(err) => {
+                if !silent && capture::is_region_selection_cancelled(&err) {
+                    let _ = Notification::new()
+                        .summary("Region mode")
+                        .body("Drag to select an area.")
+                        .appname("Shot")
+                        .timeout(notif_timeout as i32)
+                        .show();
+                }
+                return Err(err);
+            }
+        },
+        Subcommands::Win => {
+            let geo = capture::grab_window(debug, &mut hyprctl_cache)?;
+            utils::trim(&geo, debug)?
+        }
+        _ => unreachable!(),
+    };
+
+    let png_bytes = if freeze_guard.is_some() {
+        if debug {
+            eprintln!(
+                "Capture region BEFORE stopping freeze overlay to preserve transient windows (like tooltips)"
+            );
+        }
+        let bytes = crate::utils::capture_region_with_grim_cli(&geometry)?;
+        Some(bytes)
+    } else {
+        None
+    };
+
+    if let Some(guard) = freeze_guard {
+        guard.stop()?;
+        std::thread::sleep(std::time::Duration::from_millis(150));
+    } else {
+        std::thread::sleep(std::time::Duration::from_millis(150));
+    }
+
+    let save_dir = config::get_screenshots_dir(args.output_folder.clone(), config, debug)?;
+    let save_dir = if !clipboard_only && !raw {
+        config::ensure_directory(&save_dir.to_string_lossy())?
+    } else {
+        save_dir
+    };
+    let filename = args
+        .filename
+        .clone()
+        .unwrap_or_else(|| default_filename(Local::now()));
+    let save_fullpath = save_dir.join(&filename);
+
+    save::save_geometry(
+        &geometry,
+        &save_fullpath,
+        clipboard_only,
+        raw,
+        None, // custom external command is run in Edit mode
+        silent,
+        notif_timeout,
+        debug,
+        png_bytes,
+        args.upload,
+        &config.capture.upload_command,
+    )?;
 
     Ok(())
 }
@@ -230,6 +255,7 @@ fn countdown(seconds: u64, silent: bool) {
     }
 }
 
+#[allow(dead_code)]
 fn print_help() {
     println!(
         r#"
@@ -241,7 +267,7 @@ Commands:
   now           Take a screenshot of the current monitor
   win           Take a screenshot of a window
   area          Take a screenshot of a selected region
-  edit          Take a screenshot of a selected region and open in editor
+  annotate      Take a screenshot of a selected region and open in annotation tool
   ocr           Take a screenshot of a selected region and perform OCR
   in5           Take a screenshot of the current monitor after 5s countdown
   in10          Take a screenshot of the current monitor after 10s countdown

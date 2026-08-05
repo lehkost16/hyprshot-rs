@@ -1,158 +1,300 @@
 use anyhow::{Context, Result};
 use image::{ImageBuffer, Rgb};
+use rayon::prelude::*;
 use std::{
     io::{self, Read},
     path::Path,
     process::{Command, Stdio},
 };
-const BOTTOM_RATIO: f32 = 0.15;
-const MID_START_RATIO: f32 = 0.40;
-const MID_END_RATIO: f32 = 0.60;
 
-fn to_grayscale(rgb: &[u8], gray: &mut [u8]) {
-    let num_pixels = rgb.len() / 3;
-    for i in 0..num_pixels {
-        let offset = i * 3;
-        let r = rgb[offset];
-        let g = rgb[offset + 1];
-        let b = rgb[offset + 2];
-        // Standard formula: Y = 0.299R + 0.587G + 0.114B
-        gray[i] = (0.299 * r as f32 + 0.587 * g as f32 + 0.114 * b as f32) as u8;
+// ── Configuration ────────────────────────────────────────────────────
+
+/// Number of column groups for 1D sampling (3 regions × 3 columns each).
+const COL_GROUPS: usize = 9;
+/// Minimum overlap fraction for matching.
+const MIN_OVERLAP_FRAC: f32 = 0.10;
+/// Number of frames of history for velocity estimation.
+const VELOCITY_HISTORY: usize = 5;
+/// Acceptable match: SAD < threshold * this → reliable.
+const RELIABLE_MULTIPLIER: f32 = 2.5;
+
+// ── Helpers ──────────────────────────────────────────────────────────
+
+pub fn get_video_dimensions(video_path: &Path) -> Result<(usize, usize)> {
+    let output = Command::new("ffprobe")
+        .arg("-v").arg("error")
+        .arg("-select_streams").arg("v:0")
+        .arg("-show_entries").arg("stream=width,height")
+        .arg("-of").arg("csv=p=0")
+        .arg(video_path)
+        .output()
+        .context("ffprobe failed")?;
+    if !output.status.success() {
+        anyhow::bail!("ffprobe: {}", String::from_utf8_lossy(&output.stderr));
     }
+    let s = String::from_utf8_lossy(&output.stdout);
+    let parts: Vec<&str> = s.trim().split(',').collect();
+    if parts.len() != 2 { anyhow::bail!("invalid ffprobe output"); }
+    Ok((parts[0].parse()?, parts[1].parse()?))
 }
 
-fn l1_diff(a: &[u8], b: &[u8]) -> f32 {
-    let mut sum = 0u64;
-    for (x, y) in a.iter().zip(b.iter()) {
-        sum += x.abs_diff(*y) as u64;
+/// Column sampling: reduce a W×H grayscale image to H×C 1D signals.
+/// 3 horizontal zones × 3 column groups each, each group = mean of 3 adjacent cols.
+fn column_sample(gray: &[u8], w: usize, h: usize) -> Vec<f32> {
+    let cw = (w as f32) / 12.0;
+    let mut col_ranges = Vec::with_capacity(COL_GROUPS);
+    for g in 0..COL_GROUPS {
+        let center = (cw * (g as f32 + 1.0) + cw * (g as f32 / 3.0).floor() * 9.0) as usize;
+        let start = center.saturating_sub(1).min(w.saturating_sub(3));
+        let end = (start + 3).min(w);
+        col_ranges.push((start, end));
     }
-    sum as f32 / a.len() as f32
+
+    let mut out = vec![0.0f32; h * COL_GROUPS];
+    out.par_chunks_exact_mut(COL_GROUPS)
+        .enumerate()
+        .for_each(|(row, row_out)| {
+            let row_base = row * w;
+            for g in 0..COL_GROUPS {
+                let (start, end) = col_ranges[g];
+                let mut sum: u32 = 0;
+                let mut count: u32 = 0;
+                for col in start..end {
+                    sum += gray[row_base + col] as u32;
+                    count += 1;
+                }
+                row_out[g] = if count > 0 {
+                    sum as f32 / count as f32
+                } else {
+                    0.0
+                };
+            }
+        });
+    out
 }
 
-fn extract_stripe(gray: &[u8], w: usize, h: usize, stripe_w: usize) -> (Vec<u8>, usize) {
-    let sw = stripe_w.min(w);
-    let x_start = (w - sw) / 2;
-    let mut stripe = vec![0u8; sw * h];
-    for y in 0..h {
-        let src_offset = y * w + x_start;
-        let dst_offset = y * sw;
-        stripe[dst_offset..dst_offset + sw].copy_from_slice(&gray[src_offset..src_offset + sw]);
+/// Generate ordered offset candidates centered on `predict`, expanding outward.
+fn predict_offset_sequence(max: i32, predict: i32) -> Vec<i32> {
+    if max < 1 { return vec![0]; }
+    let p = predict.clamp(-max, max);
+    let mut offsets = Vec::with_capacity((2 * max + 1) as usize);
+    offsets.push(0);
+    offsets.push(p);
+    let mut d = 1i32;
+    while offsets.len() < (2 * max + 1) as usize {
+        for &cand in &[p + d, p - d, d, -d] {
+            if cand != 0 && cand.abs() <= max && !offsets.contains(&cand) {
+                offsets.push(cand);
+            }
+        }
+        d += 1;
     }
-    (stripe, sw)
+    offsets
 }
 
-fn match_template_vertical(
-    curr: &[f32],
-    temp: &[f32],
-    w: usize,
-    h: usize,
-    h_temp: usize,
-    target_y: usize,
-) -> (f32, usize) {
-    let n = w * h_temp;
+/// 1D SAD matching using column-sampled signals.
+/// Returns (offset_px, avg_sad_per_pixel). Lower SAD = better match.
+fn match_columns(
+    cols_a: &[f32], cols_b: &[f32],
+    h: usize, predict: i32,
+    min_overlap: usize,
+    sad_threshold: f32,
+    debug: bool,
+) -> (i32, f32) {
+    let max = h - min_overlap;
+    if max < 1 { return (0, 255.0); }
 
-    // Mean of template
-    let sum_t: f32 = temp.iter().sum();
-    let mean_t = sum_t / n as f32;
-    let mut sq_sum_t: f32 = 0.0;
-    for &x in temp {
-        let diff = x - mean_t;
-        sq_sum_t += diff * diff;
-    }
-    let var_t = sq_sum_t;
+    let offsets = predict_offset_sequence(max as i32, predict);
+    let nc = COL_GROUPS;
 
-    // Reject extremely low contrast / blank templates (e.g. solid white backgrounds)
-    let std_dev = (var_t / n as f32).sqrt();
-    if std_dev < 3.5f32 {
-        return (0.0, 0);
-    }
+    let mut best: (i32, f32) = (0, 255.0);
+    let mut stable_count: u32 = 0;
 
-    let mut best_penalized_score = -2.0f32;
-    let mut best_actual_score = 0.0f32;
-    let mut best_y = target_y;
+    for &off in &offsets {
+        if off.abs() as usize > max { continue; }
 
-    // Restrict search range to reasonable downward scrolling movement
-    // dy = target_y - y in [0, max_scroll] -> y in [target_y - max_scroll, target_y]
-    let max_scroll = (h / 3).max(120).min(h - h_temp);
-    let y_start = target_y.saturating_sub(max_scroll);
-    let y_end = target_y;
+        let (a_start, b_start, overlap) = if off > 0 {
+            let o = off as usize;
+            (o, 0, h - o)
+        } else if off < 0 {
+            let o = (-off) as usize;
+            (0, o, h - o)
+        } else {
+            (0, 0, h)
+        };
 
-    for y in y_start..=y_end {
-        let offset = y * w;
-        let patch = &curr[offset..offset + n];
+        let mut sad = 0.0f64;
+        for row in 0..overlap {
+            let a_row = (a_start + row) * nc;
+            let b_row = (b_start + row) * nc;
+            for c in 0..nc {
+                let diff = cols_a[a_row + c] - cols_b[b_row + c];
+                sad += (diff * diff) as f64;
+            }
+        }
+        let avg = (sad / (overlap * nc) as f64).sqrt() as f32;
 
-        let sum_p: f32 = patch.iter().sum();
-        let mean_p = sum_p / n as f32;
-
-        let mut sum_pt: f32 = 0.0;
-        let mut sum_p2: f32 = 0.0;
-        for i in 0..n {
-            let p = patch[i];
-            let t = temp[i];
-            sum_pt += p * t;
-            sum_p2 += p * p;
+        if avg < best.1 {
+            best = (off, avg);
+            if avg < sad_threshold {
+                stable_count += 1;
+                if stable_count > 8 {
+                    break;
+                }
+            }
+        } else if avg < best.1 * 1.05 {
+            if avg < sad_threshold {
+                stable_count += 1;
+            }
+        } else {
+            stable_count = 0;
         }
 
-        let cov = sum_pt - n as f32 * mean_p * mean_t;
-        let sq_sum_p = sum_p2 - n as f32 * mean_p * mean_p;
+        if avg < sad_threshold * 0.1 {
+            if debug { eprintln!("    col_match: super-early exit at off={} sad={:.2}", off, avg); }
+            best = (off, avg);
+            break;
+        }
+    }
 
-        if sq_sum_p > 1e-5f32 {
-            let score = (cov / (sq_sum_p * var_t).sqrt()) as f32;
+    if debug {
+        eprintln!("    col_match: best off={} sad={:.2} after {} candidates",
+            best.0, best.1, offsets.len());
+    }
+    best
+}
 
-            // Apply small distance penalty to favor smaller movements
-            // This acts as a tie-breaker on empty background regions
-            let movement = (target_y - y) as f32;
-            let penalty = movement * 1e-5f32;
-            let penalized_score = score - penalty;
+/// Velocity estimation from match history.
+fn estimate_velocity(history: &[(usize, i32, f32)]) -> Option<f32> {
+    if history.len() < 2 { return None; }
+    let recent = if history.len() > VELOCITY_HISTORY {
+        &history[history.len() - VELOCITY_HISTORY..]
+    } else {
+        history
+    };
+    let first = recent[0];
+    let last = recent[recent.len() - 1];
+    let frame_diff = (last.0 - first.0) as f32;
+    if frame_diff < 1.0 { return None; }
+    Some(last.1 as f32 / frame_diff)
+}
 
-            if penalized_score > best_penalized_score {
-                best_penalized_score = penalized_score;
-                best_actual_score = score;
-                best_y = y;
+/// Decide how many frames to skip and predict the offset.
+fn calc_skip_and_predict(
+    history: &[(usize, i32, f32)],
+    h: usize,
+    max_skip: usize,
+    target_overlap: f32,
+) -> (usize, i32) {
+    if history.is_empty() { return (1, 0); }
+
+    let vel = estimate_velocity(history);
+    match vel {
+        None => {
+            (1, history.last().map(|h| h.1).unwrap_or(0))
+        }
+        Some(v) if v.abs() < 0.3 => {
+            (max_skip, history.last().map(|h| h.1).unwrap_or(0))
+        }
+        Some(v) => {
+            let target_px = (h as f32 * target_overlap) as i32;
+            let target = target_px.max(50);
+            let abs_v = v.abs();
+            let frames_needed = (target as f32 / abs_v).ceil() as usize;
+            let step = frames_needed.clamp(1, max_skip);
+            let pred = (step as f32 * v) as i32;
+            (step, pred)
+        }
+    }
+}
+
+// ── 2D Canvas ────────────────────────────────────────────────────────
+
+struct Canvas2D {
+    pixels: Vec<u8>,
+    width: usize,
+    height: usize,
+    origin_x: i32,
+    origin_y: i32,
+}
+
+impl Canvas2D {
+    fn new(w: usize, h: usize) -> Self {
+        Self {
+            pixels: vec![0u8; w * h * 3],
+            width: w,
+            height: h,
+            origin_x: 0,
+            origin_y: 0,
+        }
+    }
+
+    fn grow_to_fit(&mut self, x: i32, y: i32, w: usize, h: usize) {
+        let canvas_left = self.origin_x;
+        let canvas_right = self.origin_x + self.width as i32;
+        let canvas_top = self.origin_y;
+        let canvas_bottom = self.origin_y + self.height as i32;
+
+        let rect_left = x;
+        let rect_right = x + w as i32;
+        let rect_top = y;
+        let rect_bottom = y + h as i32;
+
+        let need_left = (canvas_left - rect_left).max(0) as usize;
+        let need_top = (canvas_top - rect_top).max(0) as usize;
+        let need_right = (rect_right - canvas_right).max(0) as usize;
+        let need_bottom = (rect_bottom - canvas_bottom).max(0) as usize;
+
+        let new_origin_x = self.origin_x - need_left as i32;
+        let new_origin_y = self.origin_y - need_top as i32;
+        let new_w = self.width + need_left + need_right;
+        let new_h = self.height + need_top + need_bottom;
+
+        if new_w == self.width && new_h == self.height { return; }
+
+        if new_w as u64 * new_h as u64 > 200_000_000 {
+            return;
+        }
+
+        let mut new_pixels = vec![0u8; new_w * new_h * 3];
+        let old_x = (self.origin_x - new_origin_x) as usize;
+        let old_y = (self.origin_y - new_origin_y) as usize;
+        for y in 0..self.height {
+            let src_start = y * self.width * 3;
+            let dst_start = ((old_y + y) * new_w + old_x) * 3;
+            new_pixels[dst_start..dst_start + self.width * 3]
+                .copy_from_slice(&self.pixels[src_start..src_start + self.width * 3]);
+        }
+        self.pixels = new_pixels;
+        self.width = new_w;
+        self.height = new_h;
+        self.origin_x = new_origin_x;
+        self.origin_y = new_origin_y;
+    }
+
+    fn place_frame(&mut self, frame: &[u8], fw: usize, fh: usize, gx: i32, gy: i32) {
+        let cx = (gx - self.origin_x) as usize;
+        let cy = (gy - self.origin_y) as usize;
+        for y in 0..fh {
+            let src = y * fw * 3;
+            let dst = ((cy + y) * self.width + cx) * 3;
+            let len = fw * 3;
+            if dst + len <= self.pixels.len() {
+                self.pixels[dst..dst + len].copy_from_slice(&frame[src..src + len]);
             }
         }
     }
 
-    (best_actual_score, best_y)
+    fn to_image(&self) -> ImageBuffer<Rgb<u8>, Vec<u8>> {
+        ImageBuffer::<Rgb<u8>, Vec<u8>>::from_raw(
+            self.width as u32,
+            self.height as u32,
+            self.pixels.clone(),
+        ).unwrap()
+    }
 }
 
-fn get_video_dimensions(video_path: &Path) -> Result<(usize, usize)> {
-    let output = Command::new("ffprobe")
-        .arg("-v")
-        .arg("error")
-        .arg("-select_streams")
-        .arg("v:0")
-        .arg("-show_entries")
-        .arg("stream=width,height")
-        .arg("-of")
-        .arg("csv=p=0")
-        .arg(video_path)
-        .output()
-        .context("Failed to run ffprobe to query video dimensions")?;
-
-    if !output.status.success() {
-        anyhow::bail!(
-            "ffprobe failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-    }
-
-    let stdout_str = String::from_utf8_lossy(&output.stdout);
-    let trimmed = stdout_str.trim();
-    let parts: Vec<&str> = trimmed.split(',').collect();
-    if parts.len() != 2 {
-        anyhow::bail!("Invalid ffprobe output: '{}'", trimmed);
-    }
-
-    let width = parts[0]
-        .parse::<usize>()
-        .context("Failed to parse video width")?;
-    let height = parts[1]
-        .parse::<usize>()
-        .context("Failed to parse video height")?;
-
-    Ok((width, height))
-}
+// ── Main pipeline ────────────────────────────────────────────────────
 
 pub fn stitch_video(
     video_path: &Path,
@@ -163,183 +305,231 @@ pub fn stitch_video(
     debug: bool,
     config: &crate::config::Config,
 ) -> Result<()> {
-    // 1. Get actual physical dimensions of the recorded video using ffprobe
-    let (w_phys, h_phys) = get_video_dimensions(video_path)
-        .unwrap_or_else(|e| {
-            if debug {
-                eprintln!("Warning: failed to query video dimensions via ffprobe ({}), falling back to estimate", e);
-            }
-            ((w_logical as f64 * scale).round() as usize, (h_logical as f64 * scale).round() as usize)
-        });
+    let sad_threshold = config.longshot.sad_threshold;
+    let max_skip = config.longshot.max_skip;
+    let target_overlap = config.longshot.target_overlap;
 
-    let scale = w_phys as f64 / w_logical as f64;
-    let crop = 0usize;
-
-    if w_phys <= crop * 2 || h_phys <= crop * 2 {
-        anyhow::bail!("Video physical size is too small for cropping");
-    }
-
-    let w_cropped = w_phys - crop * 2;
-    let h_cropped = h_phys - crop * 2;
-
-    let bottom_th = (h_cropped as f32 * BOTTOM_RATIO) as usize;
-    let mid_start = (h_cropped as f32 * MID_START_RATIO) as usize;
-    let mid_end = (h_cropped as f32 * MID_END_RATIO) as usize;
+    let (w_phys, h_phys) = get_video_dimensions(video_path).unwrap_or_else(|e| {
+        if debug { eprintln!("ffprobe fallback: {}", e); }
+        (
+            (w_logical as f64 * scale).round() as usize,
+            (h_logical as f64 * scale).round() as usize,
+        )
+    });
 
     if debug {
-        eprintln!(
-            "Stitcher: physical size={}x{}, cropped={}x{}, crop={}, scale={}",
-            w_phys, h_phys, w_cropped, h_cropped, crop, scale
-        );
+        eprintln!("Stitcher: {}x{} COL_GROUPS={} sad_threshold={:.1} max_skip={} overlap={:.2}",
+            w_phys, h_phys, COL_GROUPS, sad_threshold, max_skip, target_overlap);
     }
 
-    // 2. Spawn ffmpeg process to dump frames
-    let fps_filter = format!("fps={}", config.longshot.fps);
+    // Use YUV444p — Y plane is grayscale, skip RGB→gray conversion.
     let mut ffmpeg = Command::new("ffmpeg")
-        .arg("-i")
-        .arg(video_path)
-        .arg("-vf")
-        .arg(&fps_filter)
-        .arg("-f")
-        .arg("rawvideo")
-        .arg("-pix_fmt")
-        .arg("rgb24")
+        .arg("-i").arg(video_path)
+        .arg("-f").arg("rawvideo")
+        .arg("-pix_fmt").arg("yuv444p")
         .arg("-")
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .spawn()
-        .context("Failed to spawn ffmpeg command")?;
+        .context("ffmpeg spawn failed")?;
 
-    let mut stdout = ffmpeg
-        .stdout
-        .take()
-        .context("Failed to open ffmpeg stdout")?;
+    let mut stdout = ffmpeg.stdout.take().context("no ffmpeg stdout")?;
 
-    let raw_frame_size = w_phys * h_phys * 3;
-    let mut raw_buf = vec![0u8; raw_frame_size];
+    let frame_total_bytes = w_phys * h_phys * 3;
+    let y_plane_bytes = w_phys * h_phys;
 
-    let mut result_rgb: Vec<u8> = Vec::new();
-    let mut prev_gray: Vec<u8> = Vec::new();
-    let mut prev_stripe: Vec<f32> = Vec::new();
-    let mut sw = 0usize;
+    struct FrameData {
+        cols: Vec<f32>,
+        yuv: Vec<u8>,
+    }
 
-    let mut frame_count = 0;
-    let mut stitch_count = 0;
+    let mut frames: Vec<FrameData> = Vec::new();
+    let mut buf = vec![0u8; frame_total_bytes];
 
     loop {
-        // Read next physical frame
-        match stdout.read_exact(&mut raw_buf) {
+        match stdout.read_exact(&mut buf) {
             Ok(()) => {}
-            Err(ref e) if e.kind() == io::ErrorKind::UnexpectedEof => {
-                break;
-            }
-            Err(err) => return Err(err).context("Error reading ffmpeg output stream"),
+            Err(ref e) if e.kind() == io::ErrorKind::UnexpectedEof => break,
+            Err(err) => return Err(err).context("reading ffmpeg"),
         }
 
-        // Perform crop
-        let mut curr_rgb = vec![0u8; w_cropped * h_cropped * 3];
-        for y in 0..h_cropped {
-            let src_y = y + crop;
-            let src_start = (src_y * w_phys + crop) * 3;
-            let src_end = src_start + w_cropped * 3;
-            let dst_start = y * w_cropped * 3;
-            curr_rgb[dst_start..dst_start + w_cropped * 3]
-                .copy_from_slice(&raw_buf[src_start..src_end]);
-        }
-
-        let mut curr_gray = vec![0u8; w_cropped * h_cropped];
-        to_grayscale(&curr_rgb, &mut curr_gray);
-
-        frame_count += 1;
-
-        if frame_count == 1 {
-            // First frame: append entirely
-            result_rgb.extend_from_slice(&curr_rgb);
-            let (stripe, stripe_w) = extract_stripe(&curr_gray, w_cropped, h_cropped, 300);
-            prev_stripe = stripe.iter().map(|&x| x as f32).collect();
-            sw = stripe_w;
-            prev_gray = curr_gray;
-            continue;
-        }
-
-        // Check if frame is static compared to previous
-        let diff = l1_diff(&curr_gray, &prev_gray);
-        if diff < config.longshot.static_threshold {
-            continue;
-        }
-
-        let (curr_stripe_u8, _) = extract_stripe(&curr_gray, w_cropped, h_cropped, 300);
-        let curr_stripe: Vec<f32> = curr_stripe_u8.iter().map(|&x| x as f32).collect();
-
-        // Try Bottom-to-Bottom matching
-        let temp_bottom = &prev_stripe[(h_cropped - bottom_th) * sw..h_cropped * sw];
-        let (score_b, y_b) = match_template_vertical(
-            &curr_stripe,
-            temp_bottom,
-            sw,
-            h_cropped,
-            bottom_th,
-            h_cropped - bottom_th,
-        );
-
-        let bottom_movement = (h_cropped - bottom_th) - y_b;
-        if score_b > config.longshot.match_threshold
-            && bottom_movement as i32 > config.longshot.min_movement
-        {
-            let split_row = y_b + bottom_th;
-            if split_row < h_cropped {
-                let start_idx = split_row * w_cropped * 3;
-                result_rgb.extend_from_slice(&curr_rgb[start_idx..]);
-                stitch_count += 1;
-            }
-            prev_stripe = curr_stripe;
-            prev_gray = curr_gray;
-            continue;
-        }
-
-        // Try Middle matching
-        let temp_mid = &prev_stripe[mid_start * sw..mid_end * sw];
-        let mid_h = mid_end - mid_start;
-        let (score_m, y_m) =
-            match_template_vertical(&curr_stripe, temp_mid, sw, h_cropped, mid_h, mid_start);
-
-        let mid_movement = mid_start as i32 - y_m as i32;
-        if score_m > config.longshot.match_threshold && mid_movement > config.longshot.min_movement
-        {
-            let dy = mid_movement as usize;
-            if dy < h_cropped {
-                let start_idx = (h_cropped - dy) * w_cropped * 3;
-                result_rgb.extend_from_slice(&curr_rgb[start_idx..]);
-                stitch_count += 1;
-            }
-            prev_stripe = curr_stripe;
-            prev_gray = curr_gray;
-        }
+        let cols = column_sample(&buf[..y_plane_bytes], w_phys, h_phys);
+        frames.push(FrameData {
+            cols,
+            yuv: buf.clone(),
+        });
     }
-
     let _ = ffmpeg.wait();
+    if frames.is_empty() { anyhow::bail!("No frames read"); }
+    if debug { eprintln!("Read {} frames", frames.len()); }
 
-    if result_rgb.is_empty() {
-        anyhow::bail!("No frames were processed");
-    }
+    // ── Match & stitch ──
+    let min_overlap = (h_phys as f32 * MIN_OVERLAP_FRAC).max(20.0) as usize;
 
-    let total_h = result_rgb.len() / (w_cropped * 3);
-    if debug {
-        eprintln!(
-            "Stitcher finished: total stitched height={}px ({} segments), total read frames={}",
-            total_h, stitch_count, frame_count
+    let mut canvas = Canvas2D::new(w_phys, h_phys);
+    let rgb_0 = yuv_to_rgb(&frames[0].yuv, w_phys, h_phys);
+    canvas.place_frame(&rgb_0, w_phys, h_phys, 0, 0);
+
+    let mut history: Vec<(usize, i32, f32)> = Vec::new();
+
+    let mut last_placed: usize = 0;
+    let mut last_gx: i32 = 0;
+    let mut last_gy: i32 = 0;
+
+    let mut i = 1usize;
+    while i < frames.len() {
+        let (offset, sad) = match_columns(
+            &frames[last_placed].cols,
+            &frames[i].cols,
+            h_phys,
+            history.last().map(|h| h.1).unwrap_or(0),
+            min_overlap,
+            sad_threshold,
+            debug,
         );
+
+        let is_good = sad < sad_threshold * RELIABLE_MULTIPLIER;
+        let is_static = offset.abs() < 3 && sad < sad_threshold * 0.3;
+
+        if debug {
+            eprintln!("  match {}->{}: offset={}, sad={:.2}, good={}, static={}",
+                last_placed, i, offset, sad, is_good, is_static);
+        }
+
+        if is_good && !is_static {
+            let dy = offset;
+            let new_gx = last_gx;
+            let new_gy = last_gy + dy;
+
+            canvas.grow_to_fit(new_gx, new_gy, w_phys, h_phys);
+            let rgb_i = yuv_to_rgb(&frames[i].yuv, w_phys, h_phys);
+            canvas.place_frame(&rgb_i, w_phys, h_phys, new_gx, new_gy);
+
+            history.push((i, offset, sad));
+            last_placed = i;
+            last_gx = new_gx;
+            last_gy = new_gy;
+
+            let (skip, _pred) = calc_skip_and_predict(&history, h_phys, max_skip, target_overlap);
+            if debug { eprintln!("    placed, skip={}, next={}", skip, i + skip); }
+            i += skip;
+        } else if is_static {
+            if debug { eprintln!("    static frame, skipping"); }
+            i += 1;
+        } else {
+            if debug { eprintln!("    bad match (sad={:.2}), trying next frame", sad); }
+            i += 1;
+        }
     }
 
-    // 3. Save resulting image to file
-    let img_buffer: ImageBuffer<Rgb<u8>, Vec<u8>> =
-        ImageBuffer::from_raw(w_cropped as u32, total_h as u32, result_rgb)
-            .context("Failed to construct final image buffer")?;
-
-    img_buffer.save(output_path).context(format!(
-        "Failed to save stitched image to {}",
-        output_path.display()
-    ))?;
+    let img = canvas.to_image();
+    if debug {
+        eprintln!("Canvas: {}x{}, placed {}/{} frames",
+            img.width(), img.height(), history.len() + 1, frames.len());
+    }
+    img.save(output_path).context("Failed to save")?;
 
     Ok(())
+}
+
+/// YUV444p (BT.601 limited range) → RGB conversion.
+fn yuv_to_rgb(yuv: &[u8], w: usize, h: usize) -> Vec<u8> {
+    let plane_size = w * h;
+    let y_plane = &yuv[..plane_size];
+    let u_plane = &yuv[plane_size..2 * plane_size];
+    let v_plane = &yuv[2 * plane_size..];
+
+    let mut rgb = vec![0u8; plane_size * 3];
+    rgb.par_chunks_exact_mut(3)
+        .enumerate()
+        .for_each(|(i, pixel)| {
+            let y = y_plane[i] as f32;
+            let u = u_plane[i] as f32 - 128.0;
+            let v = v_plane[i] as f32 - 128.0;
+
+            let r = (y + 1.402 * v).round().clamp(0.0, 255.0) as u8;
+            let g = (y - 0.344136 * u - 0.714136 * v).round().clamp(0.0, 255.0) as u8;
+            let b = (y + 1.772 * u).round().clamp(0.0, 255.0) as u8;
+
+            pixel[0] = r;
+            pixel[1] = g;
+            pixel[2] = b;
+        });
+    rgb
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_col_sample() {
+        let w = 16;
+        let h = 4;
+        let gray: Vec<u8> = (0..(w * h) as u8).collect();
+        let cols = column_sample(&gray, w, h);
+        assert_eq!(cols.len(), h * COL_GROUPS);
+        for row in 0..h {
+            let row_cols = &cols[row * COL_GROUPS..(row + 1) * COL_GROUPS];
+            assert_eq!(row_cols.len(), COL_GROUPS);
+            for &v in row_cols {
+                assert!(v >= 0.0 && v <= 255.0, "value {} out of range", v);
+            }
+        }
+    }
+
+    #[test]
+    fn test_predict_offset_sequence() {
+        let seq = predict_offset_sequence(10, 5);
+        assert_eq!(seq[0], 0);
+        assert!(seq.contains(&5));
+        for i in -10i32..=10 {
+            assert!(seq.contains(&i), "missing offset {}", i);
+        }
+    }
+
+    #[test]
+    fn test_match_columns_identical() {
+        let h = 100;
+        let cols: Vec<f32> = (0..h * COL_GROUPS).map(|i| (i % 256) as f32).collect();
+        let (off, sad) = match_columns(&cols, &cols, h, 0, 10, 8.0, false);
+        assert_eq!(off, 0);
+        assert!(sad < 1.0, "sad={} should be near 0 for identical signals", sad);
+    }
+
+    #[test]
+    fn test_yuv_to_rgb_black() {
+        let w = 2;
+        let h = 2;
+        let plane_size = w * h;
+        let mut yuv = vec![0u8; plane_size * 3];
+        yuv[..plane_size].fill(16);
+        yuv[plane_size..2 * plane_size].fill(128);
+        yuv[2 * plane_size..].fill(128);
+
+        let rgb = yuv_to_rgb(&yuv, w, h);
+        for i in 0..4 {
+            assert!(rgb[i * 3] < 20, "R should be near 0, got {}", rgb[i * 3]);
+            assert!(rgb[i * 3 + 1] < 20, "G should be near 0");
+            assert!(rgb[i * 3 + 2] < 20, "B should be near 0");
+        }
+    }
+
+    #[test]
+    fn test_weread_video() {
+        let config = crate::config::Config::default();
+        let video = Path::new("/home/nana/Downloads/weread.MP4");
+        if !video.exists() {
+            eprintln!("Skipping: video file not found");
+            return;
+        }
+        let res = stitch_video(
+            video,
+            Path::new("/tmp/weread_sad_output.png"),
+            1334, 1920, 1.0, true, &config,
+        );
+        if let Err(e) = res {
+            eprintln!("Stitch failed: {}", e);
+        }
+    }
 }

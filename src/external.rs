@@ -160,7 +160,7 @@ pub fn run_external_screenshot_tool(args: &Args, config: &Config, is_ocr: bool) 
     let cmd_template = if is_ocr {
         &config.ocr.command
     } else {
-        &config.satty.command
+        &config.annotate.command
     };
 
     let mut cmd_str = cmd_template.clone();

@@ -41,6 +41,9 @@ pub struct Args {
     #[arg(long, help = "Copy to clipboard and don't save to disk")]
     pub clipboard_only: bool,
 
+    #[arg(short, long, help = "Upload captured screenshot using configured upload command")]
+    pub upload: bool,
+
     #[arg(long, help = "Initialize default config file")]
     pub init_config: bool,
 
@@ -86,8 +89,8 @@ pub enum Subcommands {
     Win,
     #[command(about = "Screenshot of selected region")]
     Area,
-    #[command(about = "Screenshot of selected region and edit with satty annotation tool")]
-    Satty,
+    #[command(about = "Screenshot of selected region and open in annotation tool")]
+    Annotate,
     #[command(about = "Screenshot of selected region and perform OCR")]
     Ocr,
     #[command(about = "Screenshot of current monitor after 5 seconds delay")]
@@ -96,6 +99,19 @@ pub enum Subcommands {
     In10,
     #[command(about = "Scroll recording and stitch long screenshot")]
     Longshot,
+    #[command(about = "Stitch an existing video into a long screenshot")]
+    Stitch {
+        #[arg(help = "Path to the recorded video file (MP4)")]
+        input: PathBuf,
+        #[arg(short, long, help = "Output PNG path (default: input path with .png extension)")]
+        output: Option<PathBuf>,
+        #[arg(short = 'W', long, help = "Logical width of the capture region")]
+        width: Option<i32>,
+        #[arg(short = 'H', long, help = "Logical height of the capture region")]
+        height: Option<i32>,
+        #[arg(short = 'S', long, default_value = "1.0", help = "Display scale factor")]
+        scale: f64,
+    },
     #[command(about = "Record a selected screen region to video (toggle start/stop)")]
     Record,
     #[command(hide = true)]
@@ -132,6 +148,7 @@ impl std::fmt::Debug for Args {
             .field("raw", &self.raw)
             .field("notif_timeout", &self.notif_timeout)
             .field("clipboard_only", &self.clipboard_only)
+            .field("upload", &self.upload)
             .finish()
     }
 }

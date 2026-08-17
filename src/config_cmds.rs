@@ -115,6 +115,10 @@ fn set_config_value(config: &mut config::Config, key: &str, value: &str) -> Resu
             config.advanced.freeze_on_region =
                 value.parse().context("Value must be 'true' or 'false'")?;
         }
+        ("advanced", "freeze_on_external") => {
+            config.advanced.freeze_on_external =
+                value.parse().context("Value must be 'true' or 'false'")?;
+        }
         ("advanced", "delay_ms") => {
             config.advanced.delay_ms = value
                 .parse()
@@ -197,6 +201,7 @@ fn set_config_value(config: &mut config::Config, key: &str, value: &str) -> Resu
                    - capture.save_file (true, false)\n\
                  Advanced:\n\
                    - advanced.freeze_on_region (true, false)\n\
+                   - advanced.freeze_on_external (true, false)\n\
                    - advanced.delay_ms (milliseconds)\n\
                   Annotate:\n\
                     - annotate.command\n\
@@ -585,6 +590,10 @@ fn configure_advanced(config: &mut config::Config) -> Result<()> {
                 "freeze_on_region (current: {})",
                 config.advanced.freeze_on_region
             ),
+            &format!(
+                "freeze_on_external (current: {})",
+                config.advanced.freeze_on_external
+            ),
             &format!("delay_ms (current: {} ms)", config.advanced.delay_ms),
             "< Back to main menu",
         ];
@@ -603,12 +612,18 @@ fn configure_advanced(config: &mut config::Config) -> Result<()> {
                     .interact()?;
             }
             1 => {
+                config.advanced.freeze_on_external = Confirm::new()
+                    .with_prompt("Freeze desktop for annotate/OCR selection?")
+                    .default(config.advanced.freeze_on_external)
+                    .interact()?;
+            }
+            2 => {
                 config.advanced.delay_ms = Input::new()
                     .with_prompt("Default delay before capture (ms)")
                     .default(config.advanced.delay_ms)
                     .interact_text()?;
             }
-            2 => break,
+            3 => break,
             _ => unreachable!(),
         }
     }

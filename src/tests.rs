@@ -208,6 +208,7 @@ fn test_default_config() {
     assert!(config.capture.notification);
     assert_eq!(config.capture.notification_timeout, 3000);
     assert!(config.advanced.freeze_on_region);
+    assert!(!config.advanced.freeze_on_external);
     assert_eq!(config.advanced.delay_ms, 0);
     assert_eq!(config.longshot.fps, 12);
     assert_eq!(config.record.quality, "balanced");

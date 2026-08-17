@@ -195,11 +195,7 @@ pub fn run_external_screenshot_tool(args: &Args, config: &Config, is_ocr: bool) 
         .unwrap_or(config.capture.notification_timeout);
 
     // 1. Start freeze overlay if requested
-    let freeze = if args.freeze {
-        true
-    } else {
-        config.advanced.freeze_on_region
-    };
+    let freeze = args.freeze || config.advanced.freeze_on_external;
 
     let freeze_guard = if freeze {
         let guard = freeze::start_freeze(None, debug)?;
@@ -219,8 +215,18 @@ pub fn run_external_screenshot_tool(args: &Args, config: &Config, is_ocr: bool) 
         }
     };
 
-    let (monitor_name, scale, _, _) =
-        get_active_monitor_info(debug).unwrap_or(("".to_string(), 1.0, 0, 0));
+    let monitor_info = get_monitor_info_for_geometry(&geometry, debug).unwrap_or_else(|_| {
+        let (name, scale, x, y) =
+            get_active_monitor_info(debug).unwrap_or(("".to_string(), 1.0, 0, 0));
+        MonitorInfo {
+            name,
+            scale,
+            x,
+            y,
+            width: i32::MAX,
+            height: i32::MAX,
+        }
+    });
 
     // 3. Capture region using grim CLI to PNG bytes
     let png_bytes = crate::utils::capture_region_with_grim_cli(&geometry)?;
@@ -268,8 +274,8 @@ pub fn run_external_screenshot_tool(args: &Args, config: &Config, is_ocr: bool) 
     cmd_str = cmd_str.replace("{y}", &geometry.y.to_string());
     cmd_str = cmd_str.replace("{w}", &geometry.width.to_string());
     cmd_str = cmd_str.replace("{h}", &geometry.height.to_string());
-    cmd_str = cmd_str.replace("{scale}", &scale.to_string());
-    cmd_str = cmd_str.replace("{monitor}", &monitor_name);
+    cmd_str = cmd_str.replace("{scale}", &monitor_info.scale.to_string());
+    cmd_str = cmd_str.replace("{monitor}", &monitor_info.name);
 
     if debug {
         eprintln!("Running command: {}", cmd_str);

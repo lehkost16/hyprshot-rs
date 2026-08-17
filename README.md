@@ -37,15 +37,7 @@ Unlike original projects that use shell wrappers, `hyshot` compiles to a single 
 
 ## Installation
 
-### Via Cargo:
-```bash
-cargo install hyshot
-```
-Selector functionality is provided natively via `slurp-rs`, so no external `slurp` binary is strictly required for screenshots.
 
-### Via AUR (Arch Linux):
-```bash
-yay -S hyshot
 ```
 
 ### Runtime Dependencies
@@ -175,6 +167,8 @@ Here is a complete list of all available configuration sections and options:
 #### `[advanced]`
 * **`freeze_on_region`** (boolean) — Freeze the desktop screen during region selection.
   * *Default:* `true`
+* **`freeze_on_external`** (boolean) — Freeze the desktop for `annotate` and `ocr` region selection.
+  * *Default:* `false`
 * **`delay_ms`** (integer) — Global delay before capturing in milliseconds.
   * *Default:* `0`
 

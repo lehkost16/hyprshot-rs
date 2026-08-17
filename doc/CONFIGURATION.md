@@ -49,6 +49,7 @@ notification_timeout = 3000
 
 [advanced]
 freeze_on_region = true
+freeze_on_external = false
 delay_ms = 0
 ```
 
@@ -97,8 +98,13 @@ For working examples, see `doc/HOTKEYS.md`.
 ### `freeze_on_region`
 
 - Enables `--freeze` by default.
-- Applies to **all capture modes**, not just region.
+- Applies to normal region capture.
 - If the compositor lacks required Wayland protocols, freeze is skipped with a warning.
+
+### `freeze_on_external`
+
+- Enables freeze by default for `annotate` and `ocr`.
+- Defaults to `false` so external tools receive the sharpest direct screenshot on fractional-scale displays.
 
 ### `delay_ms`
 

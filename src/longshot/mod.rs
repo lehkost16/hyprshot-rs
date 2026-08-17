@@ -164,10 +164,18 @@ pub fn handle_longshot(args: &Args, config: &config::Config) -> Result<()> {
         // Select region
         let geometry = selector::select_region(debug)?;
 
-        // Query active monitor name & scale factor
-        let (monitor, scale_f, ox, oy) = super::external::get_active_monitor_info(debug)
-            .unwrap_or(("eDP-1".to_string(), 1.0, 0, 0));
-        let scale = scale_f;
+        // Query the monitor containing the selected region, so the overlay border
+        // is drawn in the same output coordinate space as the recording.
+        let monitor_info = super::external::get_monitor_info_for_geometry(&geometry, debug)
+            .unwrap_or_else(|_| super::external::MonitorInfo {
+                name: "eDP-1".to_string(),
+                scale: 1.0,
+                x: 0,
+                y: 0,
+                width: i32::MAX,
+                height: i32::MAX,
+            });
+        let scale = monitor_info.scale;
 
         let video_path = std::env::temp_dir()
             .join(format!("shot_longshot_{}.mp4", std::process::id()))
@@ -186,29 +194,31 @@ pub fn handle_longshot(args: &Args, config: &config::Config) -> Result<()> {
             );
         }
 
-        // Spawn wf-recorder with lossless libx264rgb settings for pixel-perfect frame capture
-        let fps_arg = format!("fps={}", config.longshot.fps);
-        let rec_child = Command::new("wf-recorder")
-            .arg("-g")
-            .arg(format!(
-                "{},{} {}x{}",
-                geometry.x, geometry.y, geometry.width, geometry.height
-            ))
+        // Spawn wl-screenrec with --no-cursor
+        let geom_str = format!(
+            "{},{} {}x{}",
+            geometry.x, geometry.y, geometry.width, geometry.height
+        );
+        let max_fps_arg = config.longshot.fps.to_string();
+
+        let mut rec_cmd = Command::new("wl-screenrec");
+        rec_cmd.arg("-g")
+            .arg(&geom_str)
             .arg("-f")
             .arg(&video_path)
-            .arg("-c")
-            .arg("libx264rgb")
-            .arg("-p")
-            .arg("preset=ultrafast")
-            .arg("-p")
-            .arg("crf=0")
-            .arg("-F")
-            .arg(&fps_arg)
             .arg("--no-cursor")
+            .arg("--max-fps")
+            .arg(&max_fps_arg);
+
+        if config.record.hwaccel == "none" {
+            rec_cmd.arg("--no-hw");
+        }
+
+        let rec_child = rec_cmd
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()
-            .context("Failed to spawn wf-recorder. Please ensure it is installed.")?;
+            .context("Failed to spawn wl-screenrec. Please ensure it is installed: sudo pacman -S wl-screenrec")?;
         let rec_pid = rec_child.id();
 
         // Spawn overlay
@@ -229,11 +239,11 @@ pub fn handle_longshot(args: &Args, config: &config::Config) -> Result<()> {
             .arg("--scale")
             .arg(scale.to_string())
             .arg("--monitor")
-            .arg(&monitor)
+            .arg(&monitor_info.name)
             .arg("--ox")
-            .arg(ox.to_string())
+            .arg(monitor_info.x.to_string())
             .arg("--oy")
-            .arg(oy.to_string())
+            .arg(monitor_info.y.to_string())
             .stdout(Stdio::null())
             .stderr(stderr_cfg)
             .spawn()

@@ -148,6 +148,10 @@ fn set_config_value(config: &mut config::Config, key: &str, value: &str) -> Resu
         }
 
         // [record] section
+        ("record", "hide_cursor") => {
+            config.record.hide_cursor =
+                value.parse().context("Value must be 'true' or 'false'")?;
+        }
         ("record", "fps") => {
             config.record.fps = value.parse().context("Value must be a positive integer")?;
         }
@@ -398,6 +402,7 @@ fn configure_capture(config: &mut config::Config) -> Result<()> {
 fn configure_record(config: &mut config::Config) -> Result<()> {
     loop {
         let fields = &[
+            &format!("hide_cursor (current: {})", config.record.hide_cursor),
             &format!("fps (current: {})", config.record.fps),
             &format!("crf (current: {})", config.record.crf),
             &format!("save_dir (current: {})", config.record.save_dir),
@@ -416,30 +421,40 @@ fn configure_record(config: &mut config::Config) -> Result<()> {
 
         match selection {
             0 => {
+                let options = &["false (show cursor in video)", "true (hide cursor in video)"];
+                let idx = if config.record.hide_cursor { 1 } else { 0 };
+                let selected = Select::new()
+                    .with_prompt("Hide cursor during screen recording?")
+                    .default(idx)
+                    .items(options)
+                    .interact()?;
+                config.record.hide_cursor = selected == 1;
+            }
+            1 => {
                 config.record.fps = Input::new()
                     .with_prompt("Recording FPS")
                     .default(config.record.fps)
                     .interact_text()?;
             }
-            1 => {
+            2 => {
                 config.record.crf = Input::new()
                     .with_prompt("CRF quality (0-51/63)")
                     .default(config.record.crf)
                     .interact_text()?;
             }
-            2 => {
+            3 => {
                 config.record.save_dir = Input::new()
                     .with_prompt("Recording save directory")
                     .default(config.record.save_dir.clone())
                     .interact_text()?;
             }
-            3 => {
+            4 => {
                 config.record.codec = Input::new()
-                    .with_prompt("Video codec (e.g. libvpx-vp9, libx264)")
+                    .with_prompt("Video codec for wl-screenrec (auto, avc, hevc, vp9, vp8, av1)")
                     .default(config.record.codec.clone())
                     .interact_text()?;
             }
-            4 => {
+            5 => {
                 let formats = &["webm", "mp4", "mkv", "gif", "custom"];
                 let idx = formats.iter().position(|&f| f == config.record.format).unwrap_or(4);
                 let selected_fmt = Select::new()
@@ -460,47 +475,20 @@ fn configure_record(config: &mut config::Config) -> Result<()> {
                 config.record.format = new_fmt.clone();
 
                 if new_fmt == "mp4" {
-                    let confirm = Confirm::new()
-                        .with_prompt("Do you want to automatically apply recommended MP4 settings (codec=libx264, preset/tune args)?")
-                        .default(true)
-                        .interact()?;
-                    if confirm {
-                        config.record.codec = "libx264".to_string();
-                        config.record.command_args = vec![
-                            "-p".to_string(), "preset=ultrafast".to_string(),
-                            "-p".to_string(), "tune=zerolatency".to_string()
-                        ];
-                        println!("Applied MP4 presets: codec=libx264, command_args=preset=ultrafast tune=zerolatency");
-                    }
+                    config.record.codec = "avc".to_string();
+                    config.record.command_args.clear();
+                    println!("Applied MP4 preset: codec=avc");
                 } else if new_fmt == "webm" {
-                    let confirm = Confirm::new()
-                        .with_prompt("Do you want to automatically apply recommended WebM settings (codec=libvpx-vp9, cpu-used/deadline args)?")
-                        .default(true)
-                        .interact()?;
-                    if confirm {
-                        config.record.codec = "libvpx-vp9".to_string();
-                        config.record.command_args = vec![
-                            "-p".to_string(), "cpu-used=8".to_string(),
-                            "-p".to_string(), "deadline=realtime".to_string()
-                        ];
-                        println!("Applied WebM presets: codec=libvpx-vp9, command_args=cpu-used=8 deadline=realtime");
-                    }
+                    config.record.codec = "vp9".to_string();
+                    config.record.command_args.clear();
+                    println!("Applied WebM preset: codec=vp9");
                 } else if new_fmt == "gif" {
-                    let confirm = Confirm::new()
-                        .with_prompt("Do you want to automatically apply recommended GIF intermediate recording settings (codec=libx264, preset/tune args)?")
-                        .default(true)
-                        .interact()?;
-                    if confirm {
-                        config.record.codec = "libx264".to_string();
-                        config.record.command_args = vec![
-                            "-p".to_string(), "preset=ultrafast".to_string(),
-                            "-p".to_string(), "tune=zerolatency".to_string()
-                        ];
-                        println!("Applied GIF intermediate presets: codec=libx264, command_args=preset=ultrafast tune=zerolatency");
-                    }
+                    config.record.codec = "avc".to_string();
+                    config.record.command_args.clear();
+                    println!("Applied GIF intermediate preset: codec=avc");
                 }
             }
-            5 => {
+            6 => {
                 let apis = &["none", "vaapi", "nvenc"];
                 let idx = apis.iter().position(|&a| a == config.record.hwaccel).unwrap_or(0);
                 let selected_api = Select::new()
@@ -516,15 +504,15 @@ fn configure_record(config: &mut config::Config) -> Result<()> {
                     println!("NVENC enabled. If you run into issues, ensure Nvidia GPU drivers are installed.");
                 }
             }
-            6 => {
+            7 => {
                 let current_args = config.record.command_args.join(" ");
                 let args_str: String = Input::new()
-                    .with_prompt("Enter custom wf-recorder arguments (space-separated)")
+                    .with_prompt("Enter custom wl-screenrec arguments (space-separated)")
                     .default(current_args)
                     .interact_text()?;
                 config.record.command_args = args_str.split_whitespace().map(String::from).collect();
             }
-            7 => break,
+            8 => break,
             _ => unreachable!(),
         }
     }

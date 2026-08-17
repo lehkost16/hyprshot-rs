@@ -187,7 +187,7 @@ fn default_record_save_dir() -> String {
 }
 
 fn default_record_codec() -> String {
-    "libvpx-vp9".to_string()
+    "vp9".to_string()
 }
 
 fn default_record_format() -> String {
@@ -195,16 +195,11 @@ fn default_record_format() -> String {
 }
 
 fn default_record_hwaccel() -> String {
-    "none".to_string()
+    "auto".to_string()
 }
 
 fn default_record_command_args() -> Vec<String> {
-    vec![
-        "-p".to_string(),
-        "cpu-used=8".to_string(),
-        "-p".to_string(),
-        "deadline=realtime".to_string(),
-    ]
+    Vec::new()
 }
 
 fn default_file_type() -> String {
@@ -219,9 +214,16 @@ fn default_png_level() -> u32 {
     6
 }
 
+fn default_record_hide_cursor() -> bool {
+    false
+}
+
 /// Configuration for region screen recording
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct RecordConfig {
+    /// Hide mouse cursor during screen recording. Default: false
+    #[serde(default = "default_record_hide_cursor")]
+    pub hide_cursor: bool,
     /// Recording frame rate. Default: 30
     #[serde(default = "default_record_fps")]
     pub fps: u32,
@@ -231,8 +233,7 @@ pub struct RecordConfig {
     /// Directory where video recordings will be saved. Default: ~/Videos/record
     #[serde(default = "default_record_save_dir")]
     pub save_dir: String,
-    /// Video encoder codec. Default: "libvpx-vp9"
-    /// For mp4 format, use "libx264"
+    /// Video encoder codec for wl-screenrec: "auto", "avc", "hevc", "vp9", "vp8", "av1". Default: "vp9"
     #[serde(default = "default_record_codec")]
     pub codec: String,
     /// Output video format (determines file extension). Default: "webm"
@@ -243,16 +244,28 @@ pub struct RecordConfig {
     /// Options: "none", "vaapi", "nvenc"
     #[serde(default = "default_record_hwaccel")]
     pub hwaccel: String,
-    /// Additional custom arguments for wf-recorder.
-    /// Default: ["-p", "cpu-used=8", "-p", "deadline=realtime"]
-    /// For libx264, consider: ["-p", "preset=ultrafast", "-p", "tune=zerolatency"]
+    /// Additional custom arguments for wl-screenrec.
     #[serde(default = "default_record_command_args")]
     pub command_args: Vec<String>,
+}
+
+impl RecordConfig {
+    pub fn sanitize(&mut self) {
+        if self.command_args.iter().any(|a| a == "-p" || a.starts_with("preset=") || a.starts_with("tune=") || a.starts_with("cpu-used=") || a.starts_with("deadline=")) {
+            self.command_args.retain(|arg| arg != "-p" && !arg.starts_with("preset=") && !arg.starts_with("tune=") && !arg.starts_with("cpu-used=") && !arg.starts_with("deadline="));
+        }
+        if self.codec == "libx264" {
+            self.codec = "avc".to_string();
+        } else if self.codec == "libvpx-vp9" {
+            self.codec = "vp9".to_string();
+        }
+    }
 }
 
 impl Default for RecordConfig {
     fn default() -> Self {
         Self {
+            hide_cursor: default_record_hide_cursor(),
             fps: default_record_fps(),
             crf: default_record_crf(),
             save_dir: default_record_save_dir(),
@@ -548,8 +561,10 @@ impl Config {
             config_path.display()
         ))?;
 
-        let config: Config =
+        let mut config: Config =
             toml::from_str(&content).context("Failed to parse config file. Check TOML syntax.")?;
+
+        config.record.sanitize();
 
         Ok(config)
     }
@@ -619,16 +634,14 @@ impl Config {
             } else if line.starts_with("[longshot]") {
                 result.push_str("\n# Longshot (scrolling screenshot) settings\n");
             } else if line.starts_with("[record]") {
-                result.push_str("\n# Screen recording settings\n");
+                result.push_str("\n# Screen recording settings (powered by wl-screenrec)\n");
                 result.push_str("#\n");
-                result.push_str("# Format / codec pairing guide:\n");
-                result.push_str("#   - format=\"webm\" + codec=\"libvpx-vp9\" (default, VP9, CRF 0-63)\n");
-                result.push_str("#   - format=\"mp4\"  + codec=\"libx264\"     (H.264, CRF 0-51)\n");
-                result.push_str("#   - format=\"mkv\"  + codec=\"libvpx-vp9\" or \"libx264\"\n");
+                result.push_str("# Format / codec options for wl-screenrec:\n");
+                result.push_str("#   - format=\"webm\" + codec=\"vp9\" (default)\n");
+                result.push_str("#   - format=\"mp4\"  + codec=\"avc\" (H.264)\n");
+                result.push_str("#   - format=\"gif\"  (auto converts recorded video to high quality GIF)\n");
                 result.push_str("#\n");
-                result.push_str("# When switching to mp4/libx264, also update command_args, e.g.:\n");
-                result.push_str("#   command_args = [\"-p\", \"preset=ultrafast\", \"-p\", \"tune=zerolatency\"]\n");
-                result.push_str("# The default command_args (cpu-used=8, deadline=realtime) are VP9-only.\n");
+                result.push_str("# Additional command_args can pass extra flags to wl-screenrec (e.g. [\"--audio\"])\n");
             }
 
             result.push_str(line);

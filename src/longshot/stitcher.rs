@@ -38,9 +38,74 @@ pub fn get_video_dimensions(video_path: &Path) -> Result<(usize, usize)> {
     Ok((parts[0].parse()?, parts[1].parse()?))
 }
 
-/// Column sampling: reduce a W×H grayscale image to H×C 1D signals.
-/// 3 horizontal zones × 3 column groups each, each group = mean of 3 adjacent cols.
-fn column_sample(gray: &[u8], w: usize, h: usize) -> Vec<f32> {
+/// Detect static top (Header) and bottom (Footer) borders by analyzing row variance across frames.
+pub fn detect_static_borders(
+    y_planes: &[&[u8]],
+    w: usize,
+    h: usize,
+) -> (usize, usize) {
+    if y_planes.len() < 2 || w == 0 || h == 0 {
+        return (0, 0);
+    }
+
+    let max_header = h / 3;
+    let max_footer = h / 3;
+
+    // Check top rows
+    let mut top_border = 0;
+    for r in 0..max_header {
+        let row_off = r * w;
+        let mut row_diff = 0u64;
+        let first_row = &y_planes[0][row_off..row_off + w];
+
+        for plane in &y_planes[1..] {
+            let other_row = &plane[row_off..row_off + w];
+            for col in (0..w).step_by(2) {
+                row_diff += (first_row[col] as i16 - other_row[col] as i16).unsigned_abs() as u64;
+            }
+        }
+        let sampled_cols = (w + 1) / 2;
+        let avg_diff = row_diff as f32 / ((y_planes.len() - 1) * sampled_cols) as f32;
+        if avg_diff < 2.5 {
+            top_border = r + 1;
+        } else {
+            break;
+        }
+    }
+
+    // Check bottom rows
+    let mut bottom_border = 0;
+    for b in 0..max_footer {
+        let r = h - 1 - b;
+        let row_off = r * w;
+        let mut row_diff = 0u64;
+        let first_row = &y_planes[0][row_off..row_off + w];
+
+        for plane in &y_planes[1..] {
+            let other_row = &plane[row_off..row_off + w];
+            for col in (0..w).step_by(2) {
+                row_diff += (first_row[col] as i16 - other_row[col] as i16).unsigned_abs() as u64;
+            }
+        }
+        let sampled_cols = (w + 1) / 2;
+        let avg_diff = row_diff as f32 / ((y_planes.len() - 1) * sampled_cols) as f32;
+        if avg_diff < 2.5 {
+            bottom_border = b + 1;
+        } else {
+            break;
+        }
+    }
+
+    (top_border, bottom_border)
+}
+
+/// Column sampling within active content bounds [top_border, H - bottom_border].
+fn column_sample(gray: &[u8], w: usize, h: usize, top_border: usize, bottom_border: usize) -> Vec<f32> {
+    let active_h = h.saturating_sub(top_border + bottom_border);
+    if active_h == 0 {
+        return Vec::new();
+    }
+
     let cw = (w as f32) / 12.0;
     let mut col_ranges = Vec::with_capacity(COL_GROUPS);
     for g in 0..COL_GROUPS {
@@ -50,11 +115,12 @@ fn column_sample(gray: &[u8], w: usize, h: usize) -> Vec<f32> {
         col_ranges.push((start, end));
     }
 
-    let mut out = vec![0.0f32; h * COL_GROUPS];
+    let mut out = vec![0.0f32; active_h * COL_GROUPS];
     out.par_chunks_exact_mut(COL_GROUPS)
         .enumerate()
-        .for_each(|(row, row_out)| {
-            let row_base = row * w;
+        .for_each(|(row_idx, row_out)| {
+            let actual_row = top_border + row_idx;
+            let row_base = actual_row * w;
             for g in 0..COL_GROUPS {
                 let (start, end) = col_ranges[g];
                 let mut sum: u32 = 0;
@@ -92,22 +158,79 @@ fn predict_offset_sequence(max: i32, predict: i32) -> Vec<i32> {
     offsets
 }
 
-/// 1D SAD matching using column-sampled signals.
-/// Returns (offset_px, avg_sad_per_pixel). Lower SAD = better match.
+/// 2D patch verification to eliminate line skipping and disambiguate top candidates.
+fn verify_2d_mad(
+    y_a: &[u8],
+    y_b: &[u8],
+    w: usize,
+    active_h: usize,
+    top_border: usize,
+    off: i32,
+) -> f32 {
+    let (a_start, b_start, overlap) = if off > 0 {
+        let o = off as usize;
+        (o, 0, active_h - o)
+    } else if off < 0 {
+        let o = (-off) as usize;
+        (0, o, active_h - o)
+    } else {
+        (0, 0, active_h)
+    };
+
+    if overlap < 10 {
+        return 255.0;
+    }
+
+    let strip_count = 5;
+    let strip_h = 8;
+    let step = overlap / (strip_count + 1);
+
+    let mut total_diff: u64 = 0;
+    let mut total_pixels: usize = 0;
+
+    for s in 1..=strip_count {
+        let rel_row = s * step;
+        if rel_row + strip_h > overlap {
+            break;
+        }
+        let a_row_base = (top_border + a_start + rel_row) * w;
+        let b_row_base = (top_border + b_start + rel_row) * w;
+
+        for r in 0..strip_h {
+            let row_a_start = a_row_base + r * w;
+            let row_b_start = b_row_base + r * w;
+            for col in (0..w).step_by(2) {
+                total_diff += (y_a[row_a_start + col] as i16 - y_b[row_b_start + col] as i16).unsigned_abs() as u64;
+                total_pixels += 1;
+            }
+        }
+    }
+
+    if total_pixels == 0 {
+        255.0
+    } else {
+        total_diff as f32 / total_pixels as f32
+    }
+}
+
+/// Coarse-to-Fine matching: 1D SAD candidates + 2D MAD verification.
 fn match_columns(
     cols_a: &[f32], cols_b: &[f32],
-    h: usize, predict: i32,
+    y_a: &[u8], y_b: &[u8],
+    w: usize, active_h: usize, top_border: usize,
+    predict: i32,
     min_overlap: usize,
     sad_threshold: f32,
     debug: bool,
 ) -> (i32, f32) {
-    let max = h - min_overlap;
+    let max = active_h - min_overlap;
     if max < 1 { return (0, 255.0); }
 
     let offsets = predict_offset_sequence(max as i32, predict);
     let nc = COL_GROUPS;
 
-    let mut best: (i32, f32) = (0, 255.0);
+    let mut min_1d_sad = 255.0f32;
+    let mut candidates: Vec<(i32, f32)> = Vec::new();
     let mut stable_count: u32 = 0;
 
     for &off in &offsets {
@@ -115,12 +238,12 @@ fn match_columns(
 
         let (a_start, b_start, overlap) = if off > 0 {
             let o = off as usize;
-            (o, 0, h - o)
+            (o, 0, active_h - o)
         } else if off < 0 {
             let o = (-off) as usize;
-            (0, o, h - o)
+            (0, o, active_h - o)
         } else {
-            (0, 0, h)
+            (0, 0, active_h)
         };
 
         let mut sad = 0.0f64;
@@ -134,32 +257,45 @@ fn match_columns(
         }
         let avg = (sad / (overlap * nc) as f64).sqrt() as f32;
 
-        if avg < best.1 {
-            best = (off, avg);
+        if avg < min_1d_sad {
+            min_1d_sad = avg;
+            candidates.push((off, avg));
             if avg < sad_threshold {
                 stable_count += 1;
                 if stable_count > 8 {
                     break;
                 }
             }
-        } else if avg < best.1 * 1.05 {
-            if avg < sad_threshold {
-                stable_count += 1;
-            }
-        } else {
-            stable_count = 0;
+        } else if avg < min_1d_sad * 1.15 {
+            candidates.push((off, avg));
         }
 
         if avg < sad_threshold * 0.1 {
-            if debug { eprintln!("    col_match: super-early exit at off={} sad={:.2}", off, avg); }
-            best = (off, avg);
             break;
         }
     }
 
+    if candidates.is_empty() {
+        return (0, 255.0);
+    }
+
+    candidates.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
+    candidates.truncate(5);
+
+    let mut best: (i32, f32) = candidates[0];
+    let mut best_2d_mad = verify_2d_mad(y_a, y_b, w, active_h, top_border, best.0);
+
+    for &(off, avg_1d) in candidates.iter().skip(1) {
+        let mad_2d = verify_2d_mad(y_a, y_b, w, active_h, top_border, off);
+        if mad_2d < best_2d_mad * 0.95 {
+            best_2d_mad = mad_2d;
+            best = (off, avg_1d);
+        }
+    }
+
     if debug {
-        eprintln!("    col_match: best off={} sad={:.2} after {} candidates",
-            best.0, best.1, offsets.len());
+        eprintln!("    col_match: best off={} 1d_sad={:.2} 2d_mad={:.2}",
+            best.0, best.1, best_2d_mad);
     }
     best
 }
@@ -272,14 +408,53 @@ impl Canvas2D {
         self.origin_y = new_origin_y;
     }
 
-    fn place_frame(&mut self, frame: &[u8], fw: usize, fh: usize, gx: i32, gy: i32) {
+    fn place_frame_cropped(
+        &mut self,
+        frame: &[u8],
+        fw: usize,
+        fh: usize,
+        top_border: usize,
+        bottom_border: usize,
+        gx: i32,
+        gy: i32,
+    ) {
+        let active_h = fh.saturating_sub(top_border + bottom_border);
+        if active_h == 0 { return; }
+
         let cx = (gx - self.origin_x) as usize;
         let cy = (gy - self.origin_y) as usize;
-        for y in 0..fh {
-            let src = y * fw * 3;
+        for y in 0..active_h {
+            let src_y = top_border + y;
+            let src = src_y * fw * 3;
             let dst = ((cy + y) * self.width + cx) * 3;
             let len = fw * 3;
-            if dst + len <= self.pixels.len() {
+            if dst + len <= self.pixels.len() && src + len <= frame.len() {
+                self.pixels[dst..dst + len].copy_from_slice(&frame[src..src + len]);
+            }
+        }
+    }
+
+    fn overlay_header(&mut self, frame: &[u8], fw: usize, top_border: usize) {
+        if top_border == 0 { return; }
+        for y in 0..top_border.min(self.height) {
+            let src = y * fw * 3;
+            let dst = y * self.width * 3;
+            let len = (fw * 3).min(self.width * 3);
+            if dst + len <= self.pixels.len() && src + len <= frame.len() {
+                self.pixels[dst..dst + len].copy_from_slice(&frame[src..src + len]);
+            }
+        }
+    }
+
+    fn overlay_footer(&mut self, frame: &[u8], fw: usize, fh: usize, bottom_border: usize) {
+        if bottom_border == 0 || bottom_border > self.height || bottom_border > fh { return; }
+        let start_y = self.height - bottom_border;
+        let src_start_y = fh - bottom_border;
+        for y in 0..bottom_border {
+            let src = (src_start_y + y) * fw * 3;
+            let dst = (start_y + y) * self.width * 3;
+            let len = (fw * 3).min(self.width * 3);
+            if dst + len <= self.pixels.len() && src + len <= frame.len() {
                 self.pixels[dst..dst + len].copy_from_slice(&frame[src..src + len]);
             }
         }
@@ -353,9 +528,8 @@ pub fn stitch_video(
             Err(err) => return Err(err).context("reading ffmpeg"),
         }
 
-        let cols = column_sample(&buf[..y_plane_bytes], w_phys, h_phys);
         frames.push(FrameData {
-            cols,
+            cols: Vec::new(),
             yuv: buf.clone(),
         });
     }
@@ -363,12 +537,32 @@ pub fn stitch_video(
     if frames.is_empty() { anyhow::bail!("No frames read"); }
     if debug { eprintln!("Read {} frames", frames.len()); }
 
-    // ── Match & stitch ──
-    let min_overlap = (h_phys as f32 * MIN_OVERLAP_FRAC).max(20.0) as usize;
+    // ── Auto-Detect Static Borders ──
+    let sample_indices: Vec<usize> = if frames.len() <= 5 {
+        (0..frames.len()).collect()
+    } else {
+        let step = frames.len() / 5;
+        (0..5).map(|k| (k * step).min(frames.len() - 1)).collect()
+    };
+    let sampled_y_planes: Vec<&[u8]> = sample_indices.iter().map(|&idx| &frames[idx].yuv[..y_plane_bytes]).collect();
+    let (top_border, bottom_border) = detect_static_borders(&sampled_y_planes, w_phys, h_phys);
+    if debug {
+        eprintln!("Auto-Masking: detected top_border={}px, bottom_border={}px", top_border, bottom_border);
+    }
 
-    let mut canvas = Canvas2D::new(w_phys, h_phys);
+    let active_h = h_phys.saturating_sub(top_border + bottom_border);
+    if active_h == 0 { anyhow::bail!("Active height is 0 after border detection"); }
+
+    for frame in &mut frames {
+        frame.cols = column_sample(&frame.yuv[..y_plane_bytes], w_phys, h_phys, top_border, bottom_border);
+    }
+
+    // ── Match & stitch ──
+    let min_overlap = (active_h as f32 * MIN_OVERLAP_FRAC).max(20.0) as usize;
+
+    let mut canvas = Canvas2D::new(w_phys, active_h);
     let rgb_0 = yuv_to_rgb(&frames[0].yuv, w_phys, h_phys);
-    canvas.place_frame(&rgb_0, w_phys, h_phys, 0, 0);
+    canvas.place_frame_cropped(&rgb_0, w_phys, h_phys, top_border, bottom_border, 0, 0);
 
     let mut history: Vec<(usize, i32, f32)> = Vec::new();
 
@@ -381,7 +575,11 @@ pub fn stitch_video(
         let (offset, sad) = match_columns(
             &frames[last_placed].cols,
             &frames[i].cols,
-            h_phys,
+            &frames[last_placed].yuv[..y_plane_bytes],
+            &frames[i].yuv[..y_plane_bytes],
+            w_phys,
+            active_h,
+            top_border,
             history.last().map(|h| h.1).unwrap_or(0),
             min_overlap,
             sad_threshold,
@@ -401,16 +599,16 @@ pub fn stitch_video(
             let new_gx = last_gx;
             let new_gy = last_gy + dy;
 
-            canvas.grow_to_fit(new_gx, new_gy, w_phys, h_phys);
+            canvas.grow_to_fit(new_gx, new_gy, w_phys, active_h);
             let rgb_i = yuv_to_rgb(&frames[i].yuv, w_phys, h_phys);
-            canvas.place_frame(&rgb_i, w_phys, h_phys, new_gx, new_gy);
+            canvas.place_frame_cropped(&rgb_i, w_phys, h_phys, top_border, bottom_border, new_gx, new_gy);
 
             history.push((i, offset, sad));
             last_placed = i;
             last_gx = new_gx;
             last_gy = new_gy;
 
-            let (skip, _pred) = calc_skip_and_predict(&history, h_phys, max_skip, target_overlap);
+            let (skip, _pred) = calc_skip_and_predict(&history, active_h, max_skip, target_overlap);
             if debug { eprintln!("    placed, skip={}, next={}", skip, i + skip); }
             i += skip;
         } else if is_static {
@@ -420,6 +618,16 @@ pub fn stitch_video(
             if debug { eprintln!("    bad match (sad={:.2}), trying next frame", sad); }
             i += 1;
         }
+    }
+
+    if top_border > 0 {
+        canvas.grow_to_fit(0, - (top_border as i32), w_phys, top_border);
+        canvas.overlay_header(&rgb_0, w_phys, top_border);
+    }
+    if bottom_border > 0 {
+        let last_rgb = yuv_to_rgb(&frames[last_placed].yuv, w_phys, h_phys);
+        canvas.grow_to_fit(0, canvas.height as i32, w_phys, bottom_border);
+        canvas.overlay_footer(&last_rgb, w_phys, h_phys, bottom_border);
     }
 
     let img = canvas.to_image();
@@ -467,7 +675,7 @@ mod tests {
         let w = 16;
         let h = 4;
         let gray: Vec<u8> = (0..(w * h) as u8).collect();
-        let cols = column_sample(&gray, w, h);
+        let cols = column_sample(&gray, w, h, 0, 0);
         assert_eq!(cols.len(), h * COL_GROUPS);
         for row in 0..h {
             let row_cols = &cols[row * COL_GROUPS..(row + 1) * COL_GROUPS];
@@ -491,10 +699,37 @@ mod tests {
     #[test]
     fn test_match_columns_identical() {
         let h = 100;
-        let cols: Vec<f32> = (0..h * COL_GROUPS).map(|i| (i % 256) as f32).collect();
-        let (off, sad) = match_columns(&cols, &cols, h, 0, 10, 8.0, false);
+        let w = 16;
+        let y: Vec<u8> = (0..w * h).map(|i| (i % 256) as u8).collect();
+        let cols = column_sample(&y, w, h, 0, 0);
+        let (off, sad) = match_columns(&cols, &cols, &y, &y, w, h, 0, 0, 10, 8.0, false);
         assert_eq!(off, 0);
         assert!(sad < 1.0, "sad={} should be near 0 for identical signals", sad);
+    }
+
+    #[test]
+    fn test_detect_static_borders() {
+        let w = 100;
+        let h = 100;
+        let mut f1 = vec![0u8; w * h];
+        let mut f2 = vec![0u8; w * h];
+
+        for r in 0..20 {
+            for c in 0..w {
+                f1[r * w + c] = 200;
+                f2[r * w + c] = 200;
+            }
+        }
+        for r in 20..100 {
+            for c in 0..w {
+                f1[r * w + c] = (r % 256) as u8;
+                f2[r * w + c] = ((r + 10) % 256) as u8;
+            }
+        }
+        let planes = vec![f1.as_slice(), f2.as_slice()];
+        let (top, bottom) = detect_static_borders(&planes, w, h);
+        assert_eq!(top, 20);
+        assert_eq!(bottom, 0);
     }
 
     #[test]

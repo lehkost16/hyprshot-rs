@@ -157,10 +157,18 @@ pub fn handle_record(args: &Args, config: &config::Config) -> Result<()> {
         // Select region
         let geometry = selector::select_region(debug)?;
 
-        // Query active monitor name & scale factor
-        let (monitor, scale_f, ox, oy) = crate::external::get_active_monitor_info(debug)
-            .unwrap_or(("eDP-1".to_string(), 1.0, 0, 0));
-        let scale = scale_f;
+        // Query the monitor containing the selected region, so the overlay border
+        // is drawn in the same output coordinate space as the recording.
+        let monitor_info = crate::external::get_monitor_info_for_geometry(&geometry, debug)
+            .unwrap_or_else(|_| crate::external::MonitorInfo {
+                name: "eDP-1".to_string(),
+                scale: 1.0,
+                x: 0,
+                y: 0,
+                width: i32::MAX,
+                height: i32::MAX,
+            });
+        let scale = monitor_info.scale;
 
         let filename = format!(
             "record_{}.{}",
@@ -189,46 +197,39 @@ pub fn handle_record(args: &Args, config: &config::Config) -> Result<()> {
             );
         }
 
-        // Spawn wf-recorder with configured parameters
-        let fps_arg = format!("fps={}", config.record.fps);
-        let crf_arg = config.record.crf.to_string();
+        // Spawn wl-screenrec with configured parameters
+        let fps_arg = config.record.fps.to_string();
+        let geom_str = format!(
+            "{},{} {}x{}",
+            geometry.x, geometry.y, geometry.width, geometry.height
+        );
 
-        let mut cmd = Command::new("wf-recorder");
+        let mut cmd = Command::new("wl-screenrec");
         cmd.arg("-g")
-            .arg(format!(
-                "{},{} {}x{}",
-                geometry.x, geometry.y, geometry.width, geometry.height
-            ))
+            .arg(&geom_str)
             .arg("-f")
-            .arg(&record_path_str);
+            .arg(&record_path_str)
+            .arg("--max-fps")
+            .arg(&fps_arg);
 
-        // Handle GPU hardware acceleration
-        let mut codec = config.record.codec.clone();
-        if config.record.hwaccel == "vaapi" {
-            cmd.arg("-d").arg("/dev/dri/renderD128");
-            if !codec.contains("vaapi") {
-                codec = "h264_vaapi".to_string();
-            }
-        } else if config.record.hwaccel == "nvenc" {
-            if !codec.contains("nvenc") {
-                codec = "h264_nvenc".to_string();
-            }
-        }
-        cmd.arg("-c").arg(&codec);
-
-        if codec == "libvpx-vp9" || codec == "libx264" {
-            cmd.arg("-p").arg(format!("crf={}", crf_arg));
+        if config.record.hide_cursor {
+            cmd.arg("--no-cursor");
         }
 
-        cmd.arg("-F")
-            .arg(&fps_arg)
-            .args(&config.record.command_args)
-            .stdout(Stdio::null())
-            .stderr(Stdio::null());
+        if config.record.hwaccel == "none" {
+            cmd.arg("--no-hw");
+        }
+
+        if !config.record.codec.is_empty() && config.record.codec != "auto" {
+            cmd.arg("--codec").arg(&config.record.codec);
+        }
+
+        cmd.args(&config.record.command_args);
+        cmd.stdout(Stdio::null()).stderr(Stdio::null());
 
         let rec_child = cmd
             .spawn()
-            .context("Failed to spawn wf-recorder. Please ensure it is installed.")?;
+            .context("Failed to spawn wl-screenrec. Please ensure it is installed: sudo pacman -S wl-screenrec")?;
         let rec_pid = rec_child.id();
 
         // Spawn overlay
@@ -249,11 +250,11 @@ pub fn handle_record(args: &Args, config: &config::Config) -> Result<()> {
             .arg("--scale")
             .arg(scale.to_string())
             .arg("--monitor")
-            .arg(&monitor)
+            .arg(&monitor_info.name)
             .arg("--ox")
-            .arg(ox.to_string())
+            .arg(monitor_info.x.to_string())
             .arg("--oy")
-            .arg(oy.to_string())
+            .arg(monitor_info.y.to_string())
             .stdout(Stdio::null())
             .stderr(stderr_cfg)
             .spawn()

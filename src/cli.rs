@@ -41,7 +41,11 @@ pub struct Args {
     #[arg(long, help = "Copy to clipboard and don't save to disk")]
     pub clipboard_only: bool,
 
-    #[arg(short, long, help = "Upload captured screenshot using configured upload command")]
+    #[arg(
+        short,
+        long,
+        help = "Upload captured screenshot using configured upload command"
+    )]
     pub upload: bool,
 
     #[arg(long, help = "Initialize default config file")]
@@ -61,11 +65,7 @@ pub struct Args {
     )]
     pub set: Option<Vec<String>>,
 
-    #[arg(
-        short,
-        long,
-        help = "Launch interactive configuration menu"
-    )]
+    #[arg(short, long, help = "Launch interactive configuration menu")]
     pub interactive: bool,
 
     #[arg(
@@ -103,13 +103,22 @@ pub enum Subcommands {
     Stitch {
         #[arg(help = "Path to the recorded video file (MP4)")]
         input: PathBuf,
-        #[arg(short, long, help = "Output PNG path (default: input path with .png extension)")]
+        #[arg(
+            short,
+            long,
+            help = "Output PNG path (default: input path with .png extension)"
+        )]
         output: Option<PathBuf>,
         #[arg(short = 'W', long, help = "Logical width of the capture region")]
         width: Option<i32>,
         #[arg(short = 'H', long, help = "Logical height of the capture region")]
         height: Option<i32>,
-        #[arg(short = 'S', long, default_value = "1.0", help = "Display scale factor")]
+        #[arg(
+            short = 'S',
+            long,
+            default_value = "1.0",
+            help = "Display scale factor"
+        )]
         scale: f64,
     },
     #[command(about = "Record a selected screen region to video (toggle start/stop)")]
@@ -132,6 +141,8 @@ pub enum Subcommands {
         ox: i32,
         #[arg(long)]
         oy: i32,
+        #[arg(long)]
+        debug: bool,
     },
 }
 

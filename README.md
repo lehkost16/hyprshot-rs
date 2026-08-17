@@ -21,9 +21,9 @@ Unlike original projects that use shell wrappers, `hyshot` compiles to a single 
   - `hyshot in5` / `hyshot in10` — Capture the active monitor after a 5 or 10-second countdown delay
 - **Scrolling Screenshot (Longshot)**
   - `hyshot longshot` — Toggle start/stop to capture a region and vertically stitch scrolled content into a single long image
-  - Employs lossless RGB video capture for intermediate frames to ensure maximum stitching quality and accuracy
+  - Uses a lower frame-rate recording tuned for scrolling, then stitches sampled frames into one image
 - **Region Screen Recording (Record)**
-  - `hyshot record` — Toggle start/stop to record a selected region to a modern WebM video file (`.webm` using VP9 codec)
+  - `hyshot record` — Toggle start/stop to record a selected region to WebM, MP4, GIF, or MKV
   - A flashing neon-red selection overlay is automatically displayed to mark the recording area
   - Automatically copies the saved video path to the clipboard on completion
 - **Screen Freezing**
@@ -54,7 +54,7 @@ yay -S hyshot
 - A Wayland compositor (Hyprland or Sway)
 
 **For Record / Longshot:**
-- `wf-recorder` — required to capture screen feeds for recording and stitching
+- `wl-screenrec` — required to capture screen feeds for recording and stitching
 
 ---
 
@@ -188,27 +188,25 @@ Here is a complete list of all available configuration sections and options:
 
 #### `[longshot]`
 * **`fps`** (integer) — Frame rate for capturing scrolling screenshot feed.
-  * *Default:* `30`
-* **`match_threshold`** (float) — Match threshold for stitching vertical scrolled frames (range `0.0` to `1.0`).
-  * *Default:* `0.8`
-* **`min_movement`** (integer) — Minimum scrolled distance in pixels to trigger next stitch step.
-  * *Default:* `2`
-* **`static_threshold`** (float) — Difference threshold (L1 norm) to detect static frames and stop scroll capture.
-  * *Default:* `1.0`
+  * *Default:* `12`
+* **`sad_threshold`** (float) — Column match threshold for stitching; lower is stricter.
+  * *Default:* `8.0`
+* **`max_skip`** (integer) — Maximum frames to skip when scroll velocity is high.
+  * *Default:* `6`
+* **`target_overlap`** (float) — Target overlap between matched frames.
+  * *Default:* `0.30`
 
 #### `[record]`
 * **`fps`** (integer) — Frame rate for screen recording.
   * *Default:* `30`
-* **`crf`** (integer) — Constant Rate Factor (CRF) quality setting.
-  * *Default:* `25`
+* **`quality`** (string) — Simple quality preset: `"compact"`, `"balanced"`, or `"high"`.
+  * *Default:* `"balanced"`
+* **`audio`** (boolean) — Record the default audio source.
+  * *Default:* `false`
 * **`save_dir`** (string) — Directory to save recorded videos.
   * *Default:* `"~/Videos/record"`
-* **`codec`** (string) — Video encoder codec.
-  * *Default:* `"libvpx-vp9"`
 * **`format`** (string) — Video format (file extension).
   * *Default:* `"webm"`
-* **`hwaccel`** (string) — GPU hardware acceleration API. Options: `"none"`, `"vaapi"`, `"nvenc"`.
-  * *Default:* `"none"`
 
 ## License
 

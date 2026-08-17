@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::{
     fs,
     io::Write,
-    path::Path,
+    path::{Path, PathBuf},
     process::{Command, Stdio},
     time::Duration,
 };
@@ -13,9 +13,10 @@ use std::{
 use crate::cli::Args;
 use crate::config;
 use crate::selector;
+use crate::utils;
 
 fn state_file_path() -> std::path::PathBuf {
-    std::env::temp_dir().join("shot-record.json")
+    utils::runtime_state_path("record.json")
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -23,6 +24,8 @@ struct RecordState {
     pid: u32,
     overlay_pid: u32,
     video_path: String,
+    #[serde(default)]
+    recording_path: String,
     #[serde(default)]
     temp_video_path: Option<String>,
 }
@@ -52,7 +55,7 @@ pub fn handle_record(args: &Args, config: &config::Config) -> Result<()> {
             eprintln!("Stopping recording: {:?}", state);
         }
 
-        // Stop wf-recorder (SIGINT / -2 to save the video cleanly with MP4 headers)
+        // Stop wl-screenrec (SIGINT / -2 to save the video cleanly with MP4 headers)
         let _ = Command::new("kill")
             .arg("-2")
             .arg(state.pid.to_string())
@@ -78,7 +81,10 @@ pub fn handle_record(args: &Args, config: &config::Config) -> Result<()> {
 
         if let Some(ref temp_path) = state.temp_video_path {
             if debug {
-                eprintln!("Converting temporary video {} to GIF {}", temp_path, state.video_path);
+                eprintln!(
+                    "Converting temporary video {} to GIF {}",
+                    temp_path, state.video_path
+                );
             }
             if !silent {
                 let _ = Notification::new()
@@ -91,8 +97,10 @@ pub fn handle_record(args: &Args, config: &config::Config) -> Result<()> {
 
             let ffmpeg_status = Command::new("ffmpeg")
                 .arg("-y")
-                .arg("-i").arg(temp_path)
-                .arg("-vf").arg("fps=15,scale=flags=lanczos,split[s0][s1];[s0]palettegen[p];[s1][p]paletteuse")
+                .arg("-i")
+                .arg(temp_path)
+                .arg("-vf")
+                .arg("fps=15,scale=flags=lanczos,split[s0][s1];[s0]palettegen[p];[s1][p]paletteuse")
                 .arg(&state.video_path)
                 .stdout(Stdio::null())
                 .stderr(Stdio::null())
@@ -108,11 +116,16 @@ pub fn handle_record(args: &Args, config: &config::Config) -> Result<()> {
                     }
                 }
                 other => {
-                    eprintln!("Warning: ffmpeg conversion failed or returned error: {:?}", other);
+                    eprintln!(
+                        "Warning: ffmpeg conversion failed or returned error: {:?}",
+                        other
+                    );
                     // Fallback to original webm
                     final_path = temp_path.clone();
                 }
             }
+        } else if !state.recording_path.is_empty() && state.recording_path != state.video_path {
+            move_finished_recording(&state.recording_path, &state.video_path)?;
         }
 
         // Copy the output path to clipboard
@@ -128,12 +141,24 @@ pub fn handle_record(args: &Args, config: &config::Config) -> Result<()> {
         if !silent {
             let (summary, body) = if state.temp_video_path.is_some() {
                 if conversion_succeeded {
-                    ("🎥 GIF已生成".to_string(), format!("GIF已保存至: {}\n路径已复制到剪贴板", final_path))
+                    (
+                        "🎥 GIF已生成".to_string(),
+                        format!("GIF已保存至: {}\n路径已复制到剪贴板", final_path),
+                    )
                 } else {
-                    ("🎥 GIF转换失败".to_string(), format!("转换失败，原视频已保存至: {}\n路径已复制到剪贴板", final_path))
+                    (
+                        "🎥 GIF转换失败".to_string(),
+                        format!(
+                            "转换失败，原视频已保存至: {}\n路径已复制到剪贴板",
+                            final_path
+                        ),
+                    )
                 }
             } else {
-                ("🎥 录屏已完成".to_string(), format!("视频已保存至: {}\n路径已复制到剪贴板", final_path))
+                (
+                    "🎥 录屏已完成".to_string(),
+                    format!("视频已保存至: {}\n路径已复制到剪贴板", final_path),
+                )
             };
 
             let _ = Notification::new()
@@ -179,21 +204,20 @@ pub fn handle_record(args: &Args, config: &config::Config) -> Result<()> {
         let video_path_str = video_path.to_string_lossy().to_string();
 
         let is_gif = config.record.format == "gif";
-        let intermediate_ext = if config.record.codec.contains("vp9") || config.record.codec.contains("vp8") {
+        let codec = config.record.resolved_codec();
+        let bitrate = config.record.resolved_bitrate();
+        let intermediate_ext = if matches!(codec, "vp9" | "vp8" | "av1") {
             "webm"
         } else {
             "mp4"
         };
-        let record_path_str = if is_gif {
-            video_path.with_extension(intermediate_ext).to_string_lossy().to_string()
-        } else {
-            video_path_str.clone()
-        };
+        let recording_path = runtime_recording_path(&video_path, intermediate_ext)?;
+        let record_path_str = recording_path.to_string_lossy().to_string();
 
         if debug {
             eprintln!(
-                "Starting screen recording. Target File: {}, Recording File: {}, Region: {:?}, Scale: {}",
-                video_path_str, record_path_str, geometry, scale
+                "Starting screen recording. Target File: {}, Recording File: {}, Region: {:?}, Scale: {}, Codec: {}, Bitrate: {}",
+                video_path_str, record_path_str, geometry, scale, codec, bitrate
             );
         }
 
@@ -210,7 +234,9 @@ pub fn handle_record(args: &Args, config: &config::Config) -> Result<()> {
             .arg("-f")
             .arg(&record_path_str)
             .arg("--max-fps")
-            .arg(&fps_arg);
+            .arg(&fps_arg)
+            .arg("--bitrate")
+            .arg(bitrate);
 
         if config.record.hide_cursor {
             cmd.arg("--no-cursor");
@@ -220,8 +246,10 @@ pub fn handle_record(args: &Args, config: &config::Config) -> Result<()> {
             cmd.arg("--no-hw");
         }
 
-        if !config.record.codec.is_empty() && config.record.codec != "auto" {
-            cmd.arg("--codec").arg(&config.record.codec);
+        cmd.arg("--codec").arg(codec);
+
+        if config.record.audio {
+            cmd.arg("--audio");
         }
 
         cmd.args(&config.record.command_args);
@@ -233,8 +261,10 @@ pub fn handle_record(args: &Args, config: &config::Config) -> Result<()> {
         let rec_pid = rec_child.id();
 
         // Spawn overlay
-        let log_file = std::fs::File::create(std::env::temp_dir().join("shot_overlay.log")).ok();
-        let stderr_cfg = log_file.map(Stdio::from).unwrap_or_else(|| Stdio::null());
+        let log_file = debug
+            .then(|| std::fs::File::create(utils::runtime_state_path("overlay.log")).ok())
+            .flatten();
+        let stderr_cfg = log_file.map(Stdio::from).unwrap_or_else(Stdio::null);
 
         let exe_path = std::env::current_exe().context("Failed to get current executable path")?;
         let overlay_child = Command::new(exe_path)
@@ -255,6 +285,7 @@ pub fn handle_record(args: &Args, config: &config::Config) -> Result<()> {
             .arg(monitor_info.x.to_string())
             .arg("--oy")
             .arg(monitor_info.y.to_string())
+            .args(debug.then_some("--debug"))
             .stdout(Stdio::null())
             .stderr(stderr_cfg)
             .spawn()
@@ -266,6 +297,7 @@ pub fn handle_record(args: &Args, config: &config::Config) -> Result<()> {
             pid: rec_pid,
             overlay_pid,
             video_path: video_path_str,
+            recording_path: record_path_str.clone(),
             temp_video_path: if is_gif { Some(record_path_str) } else { None },
         };
         let state_json =
@@ -283,5 +315,40 @@ pub fn handle_record(args: &Args, config: &config::Config) -> Result<()> {
         }
 
         Ok(())
+    }
+}
+
+fn runtime_recording_path(final_path: &Path, ext: &str) -> Result<PathBuf> {
+    let stem = final_path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .context("Failed to build temporary recording file name")?;
+    let filename = format!(".{}.recording.{}", stem, ext);
+    let parent = final_path
+        .parent()
+        .context("Failed to determine recording output directory")?;
+    Ok(parent.join(filename))
+}
+
+fn move_finished_recording(from: &str, to: &str) -> Result<()> {
+    fs::rename(from, to)
+        .with_context(|| format!("Failed to rename recording from '{}' to '{}'", from, to))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn runtime_recording_path_uses_hidden_file_next_to_final_output() {
+        let final_path = Path::new("/tmp/videos/record_2026-08-17-120000.mp4");
+        let temp_path = runtime_recording_path(final_path, "mp4").unwrap();
+        let name = temp_path.file_name().and_then(|s| s.to_str()).unwrap();
+
+        assert_eq!(name, ".record_2026-08-17-120000.recording.mp4");
+        assert_eq!(
+            temp_path,
+            Path::new("/tmp/videos/.record_2026-08-17-120000.recording.mp4")
+        );
     }
 }

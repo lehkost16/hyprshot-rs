@@ -106,7 +106,7 @@ pub struct OcrConfig {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct LongshotConfig {
     /// Frame rate for recording longshot
-    /// Default: 30
+    /// Default: 12
     #[serde(default = "default_longshot_fps")]
     pub fps: u32,
 
@@ -160,7 +160,7 @@ fn default_save_file() -> bool {
 }
 
 fn default_longshot_fps() -> u32 {
-    30
+    12
 }
 
 fn default_longshot_sad_threshold() -> f32 {
@@ -182,6 +182,14 @@ fn default_record_crf() -> u32 {
     25
 }
 
+fn default_record_quality() -> String {
+    "balanced".to_string()
+}
+
+fn default_record_audio() -> bool {
+    false
+}
+
 fn default_record_save_dir() -> String {
     "~/Videos/record".to_string()
 }
@@ -200,6 +208,18 @@ fn default_record_hwaccel() -> String {
 
 fn default_record_command_args() -> Vec<String> {
     Vec::new()
+}
+
+fn is_default_record_crf(value: &u32) -> bool {
+    *value == default_record_crf()
+}
+
+fn is_default_record_codec(value: &String) -> bool {
+    value == "vp9"
+}
+
+fn is_default_record_hwaccel(value: &String) -> bool {
+    value == "auto"
 }
 
 fn default_file_type() -> String {
@@ -227,38 +247,122 @@ pub struct RecordConfig {
     /// Recording frame rate. Default: 30
     #[serde(default = "default_record_fps")]
     pub fps: u32,
-    /// libvpx-vp9 CRF quality (0=lossless, 63=worst). Default: 25
-    #[serde(default = "default_record_crf")]
+    /// Simple quality preset: "compact", "balanced", or "high". Default: "balanced"
+    #[serde(default = "default_record_quality")]
+    pub quality: String,
+    /// Record audio from the default audio source. Default: false
+    #[serde(default = "default_record_audio")]
+    pub audio: bool,
+    /// Deprecated advanced quality setting retained for older configs.
+    #[serde(
+        default = "default_record_crf",
+        skip_serializing_if = "is_default_record_crf"
+    )]
     pub crf: u32,
     /// Directory where video recordings will be saved. Default: ~/Videos/record
     #[serde(default = "default_record_save_dir")]
     pub save_dir: String,
     /// Video encoder codec for wl-screenrec: "auto", "avc", "hevc", "vp9", "vp8", "av1". Default: "vp9"
-    #[serde(default = "default_record_codec")]
+    #[serde(
+        default = "default_record_codec",
+        skip_serializing_if = "is_default_record_codec"
+    )]
     pub codec: String,
     /// Output video format (determines file extension). Default: "webm"
     /// Supported: "webm", "mp4", "mkv", "avi", etc. (must be a valid ffmpeg muxer)
     #[serde(default = "default_record_format")]
     pub format: String,
-    /// Hardware acceleration API. Default: "none"
-    /// Options: "none", "vaapi", "nvenc"
-    #[serde(default = "default_record_hwaccel")]
+    /// Hardware acceleration API. Default: "auto"
+    /// Options: "auto", "none", "vaapi", "nvenc"
+    #[serde(
+        default = "default_record_hwaccel",
+        skip_serializing_if = "is_default_record_hwaccel"
+    )]
     pub hwaccel: String,
     /// Additional custom arguments for wl-screenrec.
-    #[serde(default = "default_record_command_args")]
+    #[serde(
+        default = "default_record_command_args",
+        skip_serializing_if = "Vec::is_empty"
+    )]
     pub command_args: Vec<String>,
 }
 
 impl RecordConfig {
     pub fn sanitize(&mut self) {
-        if self.command_args.iter().any(|a| a == "-p" || a.starts_with("preset=") || a.starts_with("tune=") || a.starts_with("cpu-used=") || a.starts_with("deadline=")) {
-            self.command_args.retain(|arg| arg != "-p" && !arg.starts_with("preset=") && !arg.starts_with("tune=") && !arg.starts_with("cpu-used=") && !arg.starts_with("deadline="));
+        self.format = normalize_record_format(&self.format);
+        self.quality = normalize_record_quality(&self.quality);
+
+        if self.command_args.iter().any(|a| {
+            a == "-p"
+                || a.starts_with("preset=")
+                || a.starts_with("tune=")
+                || a.starts_with("cpu-used=")
+                || a.starts_with("deadline=")
+        }) {
+            self.command_args.retain(|arg| {
+                arg != "-p"
+                    && !arg.starts_with("preset=")
+                    && !arg.starts_with("tune=")
+                    && !arg.starts_with("cpu-used=")
+                    && !arg.starts_with("deadline=")
+            });
         }
         if self.codec == "libx264" {
             self.codec = "avc".to_string();
         } else if self.codec == "libvpx-vp9" {
             self.codec = "vp9".to_string();
         }
+
+        if self.codec.trim().is_empty() || self.codec == "auto" {
+            self.codec = default_codec_for_format(&self.format).to_string();
+        }
+    }
+
+    pub fn resolved_codec(&self) -> &'static str {
+        match self.format.as_str() {
+            "mp4" | "gif" => "avc",
+            "webm" => "vp9",
+            _ => match self.codec.as_str() {
+                "avc" => "avc",
+                "hevc" => "hevc",
+                "vp8" => "vp8",
+                "av1" => "av1",
+                _ => "vp9",
+            },
+        }
+    }
+
+    pub fn resolved_bitrate(&self) -> &'static str {
+        match self.quality.as_str() {
+            "compact" => "2 MB",
+            "high" => "12 MB",
+            _ => "5 MB",
+        }
+    }
+}
+
+pub fn normalize_record_format(value: &str) -> String {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "mp4" => "mp4".to_string(),
+        "gif" => "gif".to_string(),
+        "mkv" => "mkv".to_string(),
+        _ => "webm".to_string(),
+    }
+}
+
+pub fn normalize_record_quality(value: &str) -> String {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "low" | "small" | "compact" => "compact".to_string(),
+        "hi" | "best" | "high" => "high".to_string(),
+        _ => "balanced".to_string(),
+    }
+}
+
+fn default_codec_for_format(format: &str) -> &'static str {
+    match format {
+        "mp4" | "gif" => "avc",
+        "webm" | "mkv" => "vp9",
+        _ => "vp9",
     }
 }
 
@@ -267,6 +371,8 @@ impl Default for RecordConfig {
         Self {
             hide_cursor: default_record_hide_cursor(),
             fps: default_record_fps(),
+            quality: default_record_quality(),
+            audio: default_record_audio(),
             crf: default_record_crf(),
             save_dir: default_record_save_dir(),
             codec: default_record_codec(),
@@ -530,8 +636,8 @@ impl Config {
     /// Get the path to the configuration file
     /// Returns ~/.config/hyshot/config.toml
     pub fn config_path() -> Result<PathBuf> {
-        let proj_dirs = ProjectDirs::from("", "", "hyshot")
-            .context("Failed to determine config directory")?;
+        let proj_dirs =
+            ProjectDirs::from("", "", "hyshot").context("Failed to determine config directory")?;
 
         let config_dir = proj_dirs.config_dir();
         Ok(config_dir.join("config.toml"))
@@ -540,8 +646,8 @@ impl Config {
     /// Get the configuration directory
     /// Returns ~/.config/hyshot/
     pub fn config_dir() -> Result<PathBuf> {
-        let proj_dirs = ProjectDirs::from("", "", "hyshot")
-            .context("Failed to determine config directory")?;
+        let proj_dirs =
+            ProjectDirs::from("", "", "hyshot").context("Failed to determine config directory")?;
 
         Ok(proj_dirs.config_dir().to_path_buf())
     }
@@ -636,12 +742,12 @@ impl Config {
             } else if line.starts_with("[record]") {
                 result.push_str("\n# Screen recording settings (powered by wl-screenrec)\n");
                 result.push_str("#\n");
-                result.push_str("# Format / codec options for wl-screenrec:\n");
-                result.push_str("#   - format=\"webm\" + codec=\"vp9\" (default)\n");
-                result.push_str("#   - format=\"mp4\"  + codec=\"avc\" (H.264)\n");
-                result.push_str("#   - format=\"gif\"  (auto converts recorded video to high quality GIF)\n");
+                result.push_str("# Simple options:\n");
+                result.push_str("#   - format=\"webm\" (default), \"mp4\", \"gif\", or \"mkv\"\n");
+                result.push_str("#   - quality=\"compact\", \"balanced\" (default), or \"high\"\n");
+                result.push_str("#   - audio=true records the default audio source\n");
                 result.push_str("#\n");
-                result.push_str("# Additional command_args can pass extra flags to wl-screenrec (e.g. [\"--audio\"])\n");
+                result.push_str("# Advanced compatibility fields codec/crf/hwaccel/command_args are retained for manual tuning.\n");
             }
 
             result.push_str(line);

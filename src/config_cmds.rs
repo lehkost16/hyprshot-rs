@@ -63,6 +63,7 @@ pub fn handle_set_config(args: &[String]) -> Result<()> {
     };
 
     set_config_value(&mut config, key, value)?;
+    config.record.sanitize();
 
     config.save().context("Failed to save config")?;
 
@@ -149,14 +150,21 @@ fn set_config_value(config: &mut config::Config, key: &str, value: &str) -> Resu
 
         // [record] section
         ("record", "hide_cursor") => {
-            config.record.hide_cursor =
-                value.parse().context("Value must be 'true' or 'false'")?;
+            config.record.hide_cursor = value.parse().context("Value must be 'true' or 'false'")?;
         }
         ("record", "fps") => {
             config.record.fps = value.parse().context("Value must be a positive integer")?;
         }
+        ("record", "quality") => {
+            config.record.quality = config::normalize_record_quality(value);
+        }
+        ("record", "audio") => {
+            config.record.audio = value.parse().context("Value must be 'true' or 'false'")?;
+        }
         ("record", "crf") => {
-            config.record.crf = value.parse().context("Value must be a positive integer (0-63)")?;
+            config.record.crf = value
+                .parse()
+                .context("Value must be a positive integer (0-63)")?;
         }
         ("record", "save_dir") => {
             config.record.save_dir = value.to_string();
@@ -165,7 +173,7 @@ fn set_config_value(config: &mut config::Config, key: &str, value: &str) -> Resu
             config.record.codec = value.to_string();
         }
         ("record", "format") => {
-            config.record.format = value.to_string();
+            config.record.format = config::normalize_record_format(value);
         }
         ("record", "hwaccel") => {
             config.record.hwaccel = value.to_string();
@@ -201,10 +209,13 @@ fn set_config_value(config: &mut config::Config, key: &str, value: &str) -> Resu
                    - longshot.target_overlap (float)\n\
                  Record:\n\
                    - record.fps (integer)\n\
-                   - record.crf (integer, 0-63)\n\
+                   - record.quality (compact, balanced, high)\n\
+                   - record.audio (true, false)\n\
                    - record.save_dir (string)\n\
-                   - record.codec (string, e.g. libvpx-vp9, libx264)\n\
-                   - record.format (string, e.g. webm, mp4, mkv)\n\
+                   - record.format (webm, mp4, gif, mkv)\n\
+                 Advanced record compatibility:\n\
+                   - record.crf (deprecated integer, retained for old configs)\n\
+                   - record.codec (string, e.g. vp9, avc)\n\
                    - record.hwaccel (string, e.g. none, vaapi, nvenc)\n\
                    - record.command_args (array or space-separated string)",
                 section,
@@ -217,7 +228,8 @@ fn set_config_value(config: &mut config::Config, key: &str, value: &str) -> Resu
 }
 
 pub fn handle_print_binds() -> Result<()> {
-    println!(r#"============================================================
+    println!(
+        r#"============================================================
 Hyprland Keyboard Shortcut Binds for Hyshot
 ============================================================
 Copy and paste the following lines into your ~/.config/hypr/hyprland.conf:
@@ -246,7 +258,8 @@ bind = SUPER, L, exec, hyshot longshot
 # Toggle region screen recording (Record)
 bind = SUPER, R, exec, hyshot record
 ============================================================
-"#);
+"#
+    );
     Ok(())
 }
 
@@ -262,7 +275,7 @@ pub fn handle_interactive_config() -> Result<()> {
         let sections = &[
             "[paths]     - Paths (screenshots save directory)",
             "[capture]   - Capture settings (notifications, format, quality)",
-            "[record]    - Screen recording settings (fps, crf, format, codec)",
+            "[record]    - Screen recording settings (fps, quality, format, audio)",
             "[longshot]  - Longshot stitching settings (fps, match threshold)",
             "[advanced]  - Advanced settings (delay, screen freeze)",
             "[tools]     - External tools (annotate, OCR commands)",
@@ -303,7 +316,10 @@ pub fn handle_interactive_config() -> Result<()> {
 fn configure_paths(config: &mut config::Config) -> Result<()> {
     loop {
         let fields = &[
-            &format!("screenshots_dir (current: {})", config.paths.screenshots_dir),
+            &format!(
+                "screenshots_dir (current: {})",
+                config.paths.screenshots_dir
+            ),
             "< Back to main menu",
         ];
 
@@ -330,12 +346,18 @@ fn configure_capture(config: &mut config::Config) -> Result<()> {
     loop {
         let fields = &[
             &format!("notification (current: {})", config.capture.notification),
-            &format!("notification_timeout (current: {} ms)", config.capture.notification_timeout),
+            &format!(
+                "notification_timeout (current: {} ms)",
+                config.capture.notification_timeout
+            ),
             &format!("save_file (current: {})", config.capture.save_file),
             &format!("file_type (current: {})", config.capture.file_type),
             &format!("jpeg_quality (current: {})", config.capture.jpeg_quality),
             &format!("png_level (current: {})", config.capture.png_level),
-            &format!("upload_command (current: {})", config.capture.upload_command),
+            &format!(
+                "upload_command (current: {})",
+                config.capture.upload_command
+            ),
             "< Back to main menu",
         ];
 
@@ -366,7 +388,10 @@ fn configure_capture(config: &mut config::Config) -> Result<()> {
             }
             3 => {
                 let types = &["png", "jpeg", "ppm"];
-                let idx = types.iter().position(|&t| t == config.capture.file_type).unwrap_or(0);
+                let idx = types
+                    .iter()
+                    .position(|&t| t == config.capture.file_type)
+                    .unwrap_or(0);
                 let selected_type = Select::new()
                     .with_prompt("Choose image format")
                     .default(idx)
@@ -403,13 +428,11 @@ fn configure_record(config: &mut config::Config) -> Result<()> {
     loop {
         let fields = &[
             &format!("hide_cursor (current: {})", config.record.hide_cursor),
+            &format!("audio (current: {})", config.record.audio),
             &format!("fps (current: {})", config.record.fps),
-            &format!("crf (current: {})", config.record.crf),
-            &format!("save_dir (current: {})", config.record.save_dir),
-            &format!("codec (current: {})", config.record.codec),
+            &format!("quality (current: {})", config.record.quality),
             &format!("format (current: {})", config.record.format),
-            &format!("hwaccel (current: {})", config.record.hwaccel),
-            &format!("command_args (current: {:?})", config.record.command_args),
+            &format!("save_dir (current: {})", config.record.save_dir),
             "< Back to main menu",
         ];
 
@@ -421,7 +444,10 @@ fn configure_record(config: &mut config::Config) -> Result<()> {
 
         match selection {
             0 => {
-                let options = &["false (show cursor in video)", "true (hide cursor in video)"];
+                let options = &[
+                    "false (show cursor in video)",
+                    "true (hide cursor in video)",
+                ];
                 let idx = if config.record.hide_cursor { 1 } else { 0 };
                 let selected = Select::new()
                     .with_prompt("Hide cursor during screen recording?")
@@ -431,88 +457,70 @@ fn configure_record(config: &mut config::Config) -> Result<()> {
                 config.record.hide_cursor = selected == 1;
             }
             1 => {
+                let options = &["false (no audio)", "true (record default audio source)"];
+                let idx = if config.record.audio { 1 } else { 0 };
+                let selected = Select::new()
+                    .with_prompt("Record audio?")
+                    .default(idx)
+                    .items(options)
+                    .interact()?;
+                config.record.audio = selected == 1;
+            }
+            2 => {
                 config.record.fps = Input::new()
                     .with_prompt("Recording FPS")
                     .default(config.record.fps)
                     .interact_text()?;
             }
-            2 => {
-                config.record.crf = Input::new()
-                    .with_prompt("CRF quality (0-51/63)")
-                    .default(config.record.crf)
-                    .interact_text()?;
-            }
             3 => {
-                config.record.save_dir = Input::new()
-                    .with_prompt("Recording save directory")
-                    .default(config.record.save_dir.clone())
-                    .interact_text()?;
+                let qualities = &["compact", "balanced", "high"];
+                let idx = qualities
+                    .iter()
+                    .position(|&q| q == config.record.quality)
+                    .unwrap_or(1);
+                let selected_quality = Select::new()
+                    .with_prompt("Choose recording quality")
+                    .default(idx)
+                    .items(qualities)
+                    .interact()?;
+                config.record.quality = qualities[selected_quality].to_string();
             }
             4 => {
-                config.record.codec = Input::new()
-                    .with_prompt("Video codec for wl-screenrec (auto, avc, hevc, vp9, vp8, av1)")
-                    .default(config.record.codec.clone())
-                    .interact_text()?;
-            }
-            5 => {
-                let formats = &["webm", "mp4", "mkv", "gif", "custom"];
-                let idx = formats.iter().position(|&f| f == config.record.format).unwrap_or(4);
+                let formats = &["webm", "mp4", "gif", "mkv"];
+                let idx = formats
+                    .iter()
+                    .position(|&f| f == config.record.format)
+                    .unwrap_or(0);
                 let selected_fmt = Select::new()
                     .with_prompt("Choose video format")
                     .default(idx)
                     .items(formats)
                     .interact()?;
-                
-                let new_fmt = if selected_fmt == 4 {
-                    Input::new()
-                        .with_prompt("Enter custom video format (extension)")
-                        .default(config.record.format.clone())
-                        .interact_text()?
-                } else {
-                    formats[selected_fmt].to_string()
-                };
 
+                let new_fmt = formats[selected_fmt].to_string();
                 config.record.format = new_fmt.clone();
 
                 if new_fmt == "mp4" {
                     config.record.codec = "avc".to_string();
-                    config.record.command_args.clear();
                     println!("Applied MP4 preset: codec=avc");
                 } else if new_fmt == "webm" {
                     config.record.codec = "vp9".to_string();
-                    config.record.command_args.clear();
                     println!("Applied WebM preset: codec=vp9");
                 } else if new_fmt == "gif" {
                     config.record.codec = "avc".to_string();
-                    config.record.command_args.clear();
                     println!("Applied GIF intermediate preset: codec=avc");
+                } else if new_fmt == "mkv" {
+                    config.record.codec = "vp9".to_string();
+                    println!("Applied MKV preset: codec=vp9");
                 }
             }
-            6 => {
-                let apis = &["none", "vaapi", "nvenc"];
-                let idx = apis.iter().position(|&a| a == config.record.hwaccel).unwrap_or(0);
-                let selected_api = Select::new()
-                    .with_prompt("Choose hardware acceleration API")
-                    .default(idx)
-                    .items(apis)
-                    .interact()?;
-                let new_api = apis[selected_api].to_string();
-                config.record.hwaccel = new_api.clone();
-                if new_api == "vaapi" {
-                    println!("VAAPI enabled. If you run into issues, ensure Intel/AMD GPU drivers are installed and render node exists at /dev/dri/renderD128.");
-                } else if new_api == "nvenc" {
-                    println!("NVENC enabled. If you run into issues, ensure Nvidia GPU drivers are installed.");
-                }
-            }
-            7 => {
-                let current_args = config.record.command_args.join(" ");
-                let args_str: String = Input::new()
-                    .with_prompt("Enter custom wl-screenrec arguments (space-separated)")
-                    .default(current_args)
+            5 => {
+                config.record.save_dir = Input::new()
+                    .with_prompt("Recording save directory")
+                    .default(config.record.save_dir.clone())
                     .interact_text()?;
-                config.record.command_args = args_str.split_whitespace().map(String::from).collect();
             }
-            8 => break,
+            6 => break,
             _ => unreachable!(),
         }
     }
@@ -525,7 +533,10 @@ fn configure_longshot(config: &mut config::Config) -> Result<()> {
             &format!("fps (current: {})", config.longshot.fps),
             &format!("sad_threshold (current: {})", config.longshot.sad_threshold),
             &format!("max_skip (current: {})", config.longshot.max_skip),
-            &format!("target_overlap (current: {})", config.longshot.target_overlap),
+            &format!(
+                "target_overlap (current: {})",
+                config.longshot.target_overlap
+            ),
             "< Back to main menu",
         ];
 
@@ -570,7 +581,10 @@ fn configure_longshot(config: &mut config::Config) -> Result<()> {
 fn configure_advanced(config: &mut config::Config) -> Result<()> {
     loop {
         let fields = &[
-            &format!("freeze_on_region (current: {})", config.advanced.freeze_on_region),
+            &format!(
+                "freeze_on_region (current: {})",
+                config.advanced.freeze_on_region
+            ),
             &format!("delay_ms (current: {} ms)", config.advanced.delay_ms),
             "< Back to main menu",
         ];

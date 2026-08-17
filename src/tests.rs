@@ -209,6 +209,21 @@ fn test_default_config() {
     assert_eq!(config.capture.notification_timeout, 3000);
     assert!(config.advanced.freeze_on_region);
     assert_eq!(config.advanced.delay_ms, 0);
+    assert_eq!(config.longshot.fps, 12);
+    assert_eq!(config.record.quality, "balanced");
+    assert!(!config.record.audio);
+}
+
+#[test]
+fn record_config_normalizes_simple_options() {
+    assert_eq!(crate::config::normalize_record_quality("small"), "compact");
+    assert_eq!(crate::config::normalize_record_quality("best"), "high");
+    assert_eq!(
+        crate::config::normalize_record_quality("whatever"),
+        "balanced"
+    );
+    assert_eq!(crate::config::normalize_record_format("MP4"), "mp4");
+    assert_eq!(crate::config::normalize_record_format("strange"), "webm");
 }
 
 #[test]
@@ -390,6 +405,10 @@ fn test_get_screenshots_dir_priority_config() {
     let mut config = crate::config::Config::default();
     config.paths.screenshots_dir = "/config/path".to_string();
 
+    unsafe {
+        env::remove_var("HYSHOT_DIR");
+    }
+
     let result = match crate::config::get_screenshots_dir(None, &config, false) {
         Ok(v) => v,
         Err(err) => panic!("Failed to resolve screenshots dir (config): {}", err),
@@ -401,6 +420,10 @@ fn test_get_screenshots_dir_priority_config() {
 fn test_get_screenshots_dir_with_tilde() {
     let mut config = crate::config::Config::default();
     config.paths.screenshots_dir = "~/Screenshots".to_string();
+
+    unsafe {
+        env::remove_var("HYSHOT_DIR");
+    }
 
     let result = match crate::config::get_screenshots_dir(None, &config, false) {
         Ok(v) => v,

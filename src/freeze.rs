@@ -119,29 +119,27 @@ mod imp {
                 cmd
             },
             IPC_TIMEOUT,
-        ) {
-            if let Ok(monitors) = serde_json::from_slice::<Value>(&output.stdout) {
-                if let Some(arr) = monitors.as_array() {
-                    let mut list = Vec::new();
-                    for m in arr {
-                        let name = m["name"].as_str().unwrap_or("").to_string();
-                        let x = m["x"].as_i64().unwrap_or(0) as i32;
-                        let y = m["y"].as_i64().unwrap_or(0) as i32;
-                        let logical_w = m["width"].as_i64().unwrap_or(0) as i32;
-                        let logical_h = m["height"].as_i64().unwrap_or(0) as i32;
-                        let scale = m["scale"].as_f64().unwrap_or(1.0);
-                        list.push(MonitorInfo {
-                            name,
-                            x,
-                            y,
-                            logical_w,
-                            logical_h,
-                            scale,
-                        });
-                    }
-                    return list;
-                }
+        ) && let Ok(monitors) = serde_json::from_slice::<Value>(&output.stdout)
+            && let Some(arr) = monitors.as_array()
+        {
+            let mut list = Vec::new();
+            for m in arr {
+                let name = m["name"].as_str().unwrap_or("").to_string();
+                let x = m["x"].as_i64().unwrap_or(0) as i32;
+                let y = m["y"].as_i64().unwrap_or(0) as i32;
+                let logical_w = m["width"].as_i64().unwrap_or(0) as i32;
+                let logical_h = m["height"].as_i64().unwrap_or(0) as i32;
+                let scale = m["scale"].as_f64().unwrap_or(1.0);
+                list.push(MonitorInfo {
+                    name,
+                    x,
+                    y,
+                    logical_w,
+                    logical_h,
+                    scale,
+                });
             }
+            return list;
         }
         // Try Sway
         if let Ok(output) = output_with_timeout(
@@ -151,30 +149,28 @@ mod imp {
                 cmd
             },
             IPC_TIMEOUT,
-        ) {
-            if let Ok(outputs) = serde_json::from_slice::<Value>(&output.stdout) {
-                if let Some(arr) = outputs.as_array() {
-                    let mut list = Vec::new();
-                    for o in arr {
-                        let name = o["name"].as_str().unwrap_or("").to_string();
-                        let rect = &o["rect"];
-                        let x = rect["x"].as_i64().unwrap_or(0) as i32;
-                        let y = rect["y"].as_i64().unwrap_or(0) as i32;
-                        let logical_w = rect["width"].as_i64().unwrap_or(0) as i32;
-                        let logical_h = rect["height"].as_i64().unwrap_or(0) as i32;
-                        let scale = o["scale"].as_f64().unwrap_or(1.0);
-                        list.push(MonitorInfo {
-                            name,
-                            x,
-                            y,
-                            logical_w,
-                            logical_h,
-                            scale,
-                        });
-                    }
-                    return list;
-                }
+        ) && let Ok(outputs) = serde_json::from_slice::<Value>(&output.stdout)
+            && let Some(arr) = outputs.as_array()
+        {
+            let mut list = Vec::new();
+            for o in arr {
+                let name = o["name"].as_str().unwrap_or("").to_string();
+                let rect = &o["rect"];
+                let x = rect["x"].as_i64().unwrap_or(0) as i32;
+                let y = rect["y"].as_i64().unwrap_or(0) as i32;
+                let logical_w = rect["width"].as_i64().unwrap_or(0) as i32;
+                let logical_h = rect["height"].as_i64().unwrap_or(0) as i32;
+                let scale = o["scale"].as_f64().unwrap_or(1.0);
+                list.push(MonitorInfo {
+                    name,
+                    x,
+                    y,
+                    logical_w,
+                    logical_h,
+                    scale,
+                });
             }
+            return list;
         }
         Vec::new()
     }
@@ -629,45 +625,44 @@ mod imp {
         for entry in &mut state.outputs {
             // 1. Try matching by name (most reliable, works if Name event was received)
             let mut matched = false;
-            if let Some(name) = &entry.name {
-                if let Some(info) = state.monitors_info.iter().find(|info| info.name == *name) {
-                    if debug {
-                        eprintln!("Freeze: matched output '{}' via name", info.name);
-                    }
-                    entry.logical_x = Some(info.x);
-                    entry.logical_y = Some(info.y);
-                    entry.logical_width = Some(info.logical_w);
-                    entry.logical_height = Some(info.logical_h);
-                    matched = true;
+            if let Some(name) = &entry.name
+                && let Some(info) = state.monitors_info.iter().find(|info| info.name == *name)
+            {
+                if debug {
+                    eprintln!("Freeze: matched output '{}' via name", info.name);
                 }
+                entry.logical_x = Some(info.x);
+                entry.logical_y = Some(info.y);
+                entry.logical_width = Some(info.logical_w);
+                entry.logical_height = Some(info.logical_h);
+                matched = true;
             }
 
             // 2. Fallback to match by position and physical size
-            if !matched {
-                if let (Some(pos_x), Some(pos_y), Some(mode_w), Some(mode_h)) = (
+            if !matched
+                && let (Some(pos_x), Some(pos_y), Some(mode_w), Some(mode_h)) = (
                     entry.pos_x,
                     entry.pos_y,
                     entry.mode_width,
                     entry.mode_height,
-                ) {
-                    if let Some(info) = state.monitors_info.iter().find(|info| {
-                        let phys_w = (info.logical_w as f64 * info.scale).round() as i32;
-                        let phys_h = (info.logical_h as f64 * info.scale).round() as i32;
-                        (info.x - pos_x).abs() < 5
-                            && (info.y - pos_y).abs() < 5
-                            && (phys_w - mode_w).abs() < 5
-                            && (phys_h - mode_h).abs() < 5
-                    }) {
-                        if debug {
-                            eprintln!("Freeze: matched output '{}' via position & size", info.name);
-                        }
-                        entry.name = Some(info.name.clone());
-                        entry.logical_x = Some(info.x);
-                        entry.logical_y = Some(info.y);
-                        entry.logical_width = Some(info.logical_w);
-                        entry.logical_height = Some(info.logical_h);
-                    }
+                )
+                && let Some(info) = state.monitors_info.iter().find(|info| {
+                    let phys_w = (info.logical_w as f64 * info.scale).round() as i32;
+                    let phys_h = (info.logical_h as f64 * info.scale).round() as i32;
+                    (info.x - pos_x).abs() < 5
+                        && (info.y - pos_y).abs() < 5
+                        && (phys_w - mode_w).abs() < 5
+                        && (phys_h - mode_h).abs() < 5
+                })
+            {
+                if debug {
+                    eprintln!("Freeze: matched output '{}' via position & size", info.name);
                 }
+                entry.name = Some(info.name.clone());
+                entry.logical_x = Some(info.x);
+                entry.logical_y = Some(info.y);
+                entry.logical_width = Some(info.logical_w);
+                entry.logical_height = Some(info.logical_h);
             }
         }
 
@@ -844,12 +839,12 @@ Check the support for this protocol on Hyprland/Sway/River/Wayfire."
             let logical_w = entry
                 .configured_w
                 .map(|w| w as i32)
-                .or_else(|| output.logical_width)
+                .or(output.logical_width)
                 .unwrap_or(0);
             let logical_h = entry
                 .configured_h
                 .map(|h| h as i32)
-                .or_else(|| output.logical_height)
+                .or(output.logical_height)
                 .unwrap_or(0);
 
             let buffer_scale = output_buffer_scale(output);

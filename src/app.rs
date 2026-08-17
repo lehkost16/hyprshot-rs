@@ -8,8 +8,8 @@ use crate::capture;
 use crate::cli::{Args, Subcommands, default_filename, resolve_delay, resolve_notif_timeout};
 use crate::config;
 use crate::config_cmds::{
-    handle_config_path, handle_init_config, handle_set_config, handle_show_config,
-    handle_interactive_config, handle_print_binds,
+    handle_config_path, handle_init_config, handle_interactive_config, handle_print_binds,
+    handle_set_config, handle_show_config,
 };
 use crate::external;
 use crate::freeze;
@@ -54,9 +54,20 @@ pub fn run(mut args: Args) -> Result<()> {
         monitor,
         ox,
         oy,
+        debug,
     }) = &args.subcommand
     {
-        return longshot::overlay::run_overlay(*x, *y, *w, *h, *scale, monitor, *ox, *oy);
+        return longshot::overlay::run_overlay(longshot::overlay::OverlayOptions {
+            x: *x,
+            y: *y,
+            w: *w,
+            h: *h,
+            scale: *scale,
+            monitor: monitor.clone(),
+            output_x: *ox,
+            output_y: *oy,
+            debug: *debug,
+        });
     }
 
     // Load config
@@ -91,21 +102,29 @@ pub fn run(mut args: Args) -> Result<()> {
     };
 
     match subcommand {
-        Subcommands::Annotate => {
-            external::run_external_screenshot_tool(&args, &config, false)
-        }
-        Subcommands::Ocr => {
-            external::run_external_screenshot_tool(&args, &config, true)
-        }
-        Subcommands::Longshot => {
-            longshot::handle_longshot(&args, &config)
-        }
-        Subcommands::Stitch { input, output, width, height, scale } => {
-            longshot::handle_stitch(input.clone(), output.clone(), width, height, scale, &config, args.debug, args.silent, args.notif_timeout)
-        }
-        Subcommands::Record => {
-            record::handle_record(&args, &config)
-        }
+        Subcommands::Annotate => external::run_external_screenshot_tool(&args, &config, false),
+        Subcommands::Ocr => external::run_external_screenshot_tool(&args, &config, true),
+        Subcommands::Longshot => longshot::handle_longshot(&args, &config),
+        Subcommands::Stitch {
+            input,
+            output,
+            width,
+            height,
+            scale,
+        } => longshot::handle_stitch(
+            longshot::StitchRequest {
+                input: input.clone(),
+                output: output.clone(),
+                width,
+                height,
+                scale,
+                debug: args.debug,
+                silent,
+                notif_timeout,
+            },
+            &config,
+        ),
+        Subcommands::Record => record::handle_record(&args, &config),
         Subcommands::Now
         | Subcommands::Win
         | Subcommands::Area

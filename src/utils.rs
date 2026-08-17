@@ -1,5 +1,6 @@
 use anyhow::{Context, Result};
 use std::io::Read;
+use std::path::PathBuf;
 use std::process::{Child, Command, ExitStatus, Output, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -15,6 +16,17 @@ use wayland_client::{
 use wayland_protocols::xdg::xdg_output::zv1::client::{
     zxdg_output_manager_v1::ZxdgOutputManagerV1, zxdg_output_v1::ZxdgOutputV1,
 };
+
+pub fn runtime_state_path(filename: &str) -> PathBuf {
+    let mut dir = std::env::var_os("XDG_RUNTIME_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(std::env::temp_dir);
+    dir.push("hyshot");
+    if std::fs::create_dir_all(&dir).is_err() {
+        dir = std::env::temp_dir();
+    }
+    dir.join(filename)
+}
 
 pub fn trim(geometry: &Geometry, debug: bool) -> Result<Geometry> {
     if debug {

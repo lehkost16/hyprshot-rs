@@ -13,12 +13,13 @@ use std::{
 use crate::cli::Args;
 use crate::config;
 use crate::selector;
+use crate::utils;
 
 pub mod overlay;
 pub mod stitcher;
 
 fn state_file_path() -> std::path::PathBuf {
-    std::env::temp_dir().join("shot-longshot.json")
+    utils::runtime_state_path("longshot.json")
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -30,6 +31,17 @@ struct LongshotState {
     w: i32,
     h: i32,
     scale: f64,
+}
+
+pub struct StitchRequest {
+    pub input: std::path::PathBuf,
+    pub output: Option<std::path::PathBuf>,
+    pub width: Option<i32>,
+    pub height: Option<i32>,
+    pub scale: f64,
+    pub debug: bool,
+    pub silent: bool,
+    pub notif_timeout: u32,
 }
 
 fn is_process_running(pid: u32) -> bool {
@@ -57,7 +69,7 @@ pub fn handle_longshot(args: &Args, config: &config::Config) -> Result<()> {
             eprintln!("Stopping longshot recording: {:?}", state);
         }
 
-        // Stop wf-recorder (SIGINT / -2 to save the video)
+        // Stop wl-screenrec (SIGINT / -2 to save the video)
         let _ = Command::new("kill")
             .arg("-2")
             .arg(state.pid.to_string())
@@ -202,7 +214,8 @@ pub fn handle_longshot(args: &Args, config: &config::Config) -> Result<()> {
         let max_fps_arg = config.longshot.fps.to_string();
 
         let mut rec_cmd = Command::new("wl-screenrec");
-        rec_cmd.arg("-g")
+        rec_cmd
+            .arg("-g")
             .arg(&geom_str)
             .arg("-f")
             .arg(&video_path)
@@ -222,8 +235,10 @@ pub fn handle_longshot(args: &Args, config: &config::Config) -> Result<()> {
         let rec_pid = rec_child.id();
 
         // Spawn overlay
-        let log_file = std::fs::File::create(std::env::temp_dir().join("shot_overlay.log")).ok();
-        let stderr_cfg = log_file.map(Stdio::from).unwrap_or_else(|| Stdio::null());
+        let log_file = debug
+            .then(|| std::fs::File::create(utils::runtime_state_path("overlay.log")).ok())
+            .flatten();
+        let stderr_cfg = log_file.map(Stdio::from).unwrap_or_else(Stdio::null);
 
         let exe_path = std::env::current_exe().context("Failed to get current executable path")?;
         let overlay_child = Command::new(exe_path)
@@ -244,6 +259,7 @@ pub fn handle_longshot(args: &Args, config: &config::Config) -> Result<()> {
             .arg(monitor_info.x.to_string())
             .arg("--oy")
             .arg(monitor_info.y.to_string())
+            .args(debug.then_some("--debug"))
             .stdout(Stdio::null())
             .stderr(stderr_cfg)
             .spawn()
@@ -279,17 +295,18 @@ pub fn handle_longshot(args: &Args, config: &config::Config) -> Result<()> {
 }
 
 /// Directly stitch an existing video file into a long screenshot.
-pub fn handle_stitch(
-    input: std::path::PathBuf,
-    output: Option<std::path::PathBuf>,
-    width: Option<i32>,
-    height: Option<i32>,
-    scale: f64,
-    config: &config::Config,
-    debug: bool,
-    silent: bool,
-    notif_timeout: Option<u32>,
-) -> Result<()> {
+pub fn handle_stitch(request: StitchRequest, config: &config::Config) -> Result<()> {
+    let StitchRequest {
+        input,
+        output,
+        width,
+        height,
+        scale,
+        debug,
+        silent,
+        notif_timeout,
+    } = request;
+
     if !input.exists() {
         anyhow::bail!("Video file not found: {}", input.display());
     }
@@ -305,11 +322,9 @@ pub fn handle_stitch(
 
     let (w, h) = match (width, height) {
         (Some(w), Some(h)) => (w, h),
-        _ => {
-            stitcher::get_video_dimensions(&input)
-                .map(|(pw, ph)| (pw as i32, ph as i32))
-                .unwrap_or_else(|_| (1920, 1080))
-        }
+        _ => stitcher::get_video_dimensions(&input)
+            .map(|(pw, ph)| (pw as i32, ph as i32))
+            .unwrap_or_else(|_| (1920, 1080)),
     };
 
     if !silent {
@@ -339,12 +354,11 @@ pub fn handle_stitch(
     }
 
     if !silent {
-        let timeout = notif_timeout.unwrap_or(3000);
         let _ = Notification::new()
             .summary("✅ 拼接完成")
             .body(&format!("长图已保存至: {}", output_path.display()))
             .icon(output_path.to_string_lossy().as_ref())
-            .timeout(timeout as i32)
+            .timeout(notif_timeout as i32)
             .appname("Shot")
             .show();
     }

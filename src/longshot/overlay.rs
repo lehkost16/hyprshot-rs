@@ -25,6 +25,34 @@ use wayland_protocols_wlr::layer_shell::v1::client::{
 const PADDING: i32 = 10;
 const BORDER_THICK: i32 = 6;
 
+pub struct OverlayOptions {
+    pub x: i32,
+    pub y: i32,
+    pub w: i32,
+    pub h: i32,
+    pub scale: f64,
+    pub monitor: String,
+    pub output_x: i32,
+    pub output_y: i32,
+    pub debug: bool,
+}
+
+#[derive(Clone, Copy)]
+struct Rect {
+    x: i32,
+    y: i32,
+    w: i32,
+    h: i32,
+}
+
+#[derive(Clone, Copy)]
+struct BorderTarget {
+    surface_w: i32,
+    surface_h: i32,
+    rect: Rect,
+    scale: f64,
+}
+
 #[derive(Debug)]
 struct OutputKey(usize);
 
@@ -257,24 +285,16 @@ impl Dispatch<ZwlrLayerShellV1, ()> for State {
     }
 }
 
-fn draw_selection_border(
-    mmap: &mut [u8],
-    width: i32,
-    height: i32,
-    rx: i32,
-    ry: i32,
-    rw: i32,
-    rh: i32,
-    true_scale: f64,
-    alpha: u8,
-) {
-    let thick = ((BORDER_THICK as f64) * true_scale).round() as i32;
-    let padding = ((PADDING as f64) * true_scale).round() as i32;
+fn draw_selection_border(mmap: &mut [u8], target: BorderTarget, alpha: u8) {
+    let thick = ((BORDER_THICK as f64) * target.scale).round() as i32;
+    let padding = ((PADDING as f64) * target.scale).round() as i32;
 
-    let border_l = ((rx as f64 * true_scale) as i32 - padding).max(0);
-    let border_r = (((rx + rw) as f64 * true_scale) as i32 + padding).min(width);
-    let border_t = ((ry as f64 * true_scale) as i32 - padding).max(0);
-    let border_b = (((ry + rh) as f64 * true_scale) as i32 + padding).min(height);
+    let border_l = ((target.rect.x as f64 * target.scale) as i32 - padding).max(0);
+    let border_r = (((target.rect.x + target.rect.w) as f64 * target.scale) as i32 + padding)
+        .min(target.surface_w);
+    let border_t = ((target.rect.y as f64 * target.scale) as i32 - padding).max(0);
+    let border_b = (((target.rect.y + target.rect.h) as f64 * target.scale) as i32 + padding)
+        .min(target.surface_h);
 
     if border_l >= border_r || border_t >= border_b {
         return;
@@ -292,7 +312,7 @@ fn draw_selection_border(
 
     let paint = |mmap: &mut [u8], y: i32, x_start: i32, x_end: i32| {
         for x in x_start..x_end {
-            let off = ((y * width + x) * 4) as usize;
+            let off = ((y * target.surface_w + x) * 4) as usize;
             if off + 3 < mmap.len() {
                 mmap[off] = 0; // B
                 mmap[off + 1] = 0; // G
@@ -320,16 +340,7 @@ fn draw_selection_border(
     }
 }
 
-pub fn run_overlay(
-    x: i32,
-    y: i32,
-    w: i32,
-    h: i32,
-    _scale: f64,
-    monitor: &str,
-    output_x: i32,
-    output_y: i32,
-) -> Result<()> {
+pub fn run_overlay(options: OverlayOptions) -> Result<()> {
     let conn = Connection::connect_to_env().context("Failed to connect to Wayland")?;
     let mut event_queue = conn.new_event_queue();
     let qh = event_queue.handle();
@@ -371,7 +382,7 @@ pub fn run_overlay(
         let output_entry = state
             .outputs
             .iter()
-            .find(|o| o.name.as_deref() == Some(monitor))
+            .find(|o| o.name.as_deref() == Some(options.monitor.as_str()))
             .or_else(|| state.outputs.first())
             .context("No outputs found")?;
         (
@@ -383,8 +394,12 @@ pub fn run_overlay(
     };
 
     // Calculate margins relative to output top-left using passed active monitor coordinates
-    let rx = x - output_x;
-    let ry = y - output_y;
+    let rect = Rect {
+        x: options.x - options.output_x,
+        y: options.y - options.output_y,
+        w: options.w,
+        h: options.h,
+    };
 
     // Create layer surface
     let surface = compositor.create_surface(&qh, ());
@@ -431,13 +446,15 @@ pub fn run_overlay(
         .or_else(|| mode_height.map(|mh| if scale_int > 0 { mh / scale_int } else { mh }))
         .unwrap_or(1080);
 
-    let _ = std::fs::write(
-        std::env::temp_dir().join("overlay_debug.log"),
-        format!(
-            "buf={w_buf}x{h_buf} mode={:?}x{:?} scale_int={scale_int} rx={rx} ry={ry} w={w} h={h}\n",
-            mode_width, mode_height
-        ),
-    );
+    if options.debug {
+        let _ = std::fs::write(
+            crate::utils::runtime_state_path("overlay-debug.log"),
+            format!(
+                "buf={w_buf}x{h_buf} mode={:?}x{:?} scale_int={scale_int} logical_scale={} rx={} ry={} w={} h={}\n",
+                mode_width, mode_height, options.scale, rect.x, rect.y, rect.w, rect.h
+            ),
+        );
+    }
 
     let stride = w_buf * 4;
     let size = (stride * h_buf) as usize;
@@ -476,13 +493,12 @@ pub fn run_overlay(
     // before the first commit — avoids race between compositor read and our write
     draw_selection_border(
         &mut surface_entry.mmap,
-        w_buf,
-        h_buf,
-        rx,
-        ry,
-        w,
-        h,
-        1.0,
+        BorderTarget {
+            surface_w: w_buf,
+            surface_h: h_buf,
+            rect,
+            scale: 1.0,
+        },
         255,
     );
     surface_entry
@@ -503,13 +519,12 @@ pub fn run_overlay(
         let surface_entry = state.surface.as_mut().unwrap();
         draw_selection_border(
             &mut surface_entry.mmap,
-            w_buf,
-            h_buf,
-            rx,
-            ry,
-            w,
-            h,
-            1.0,
+            BorderTarget {
+                surface_w: w_buf,
+                surface_h: h_buf,
+                rect,
+                scale: 1.0,
+            },
             alpha,
         );
 

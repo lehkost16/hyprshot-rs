@@ -110,10 +110,7 @@ pub fn save_geometry_with_grim(
             if debug {
                 eprintln!("Running upload command: {}", cmd_str);
             }
-            let upload_res = Command::new("sh")
-                .arg("-c")
-                .arg(&cmd_str)
-                .output();
+            let upload_res = Command::new("sh").arg("-c").arg(&cmd_str).output();
             match upload_res {
                 Ok(output) if output.status.success() => {
                     let stdout_str = String::from_utf8_lossy(&output.stdout);
@@ -122,9 +119,7 @@ pub fn save_geometry_with_grim(
                     }
                     if let Some(url) = extract_url(&stdout_str) {
                         // Copy URL to clipboard
-                        let wl_copy_res = Command::new("wl-copy")
-                            .stdin(Stdio::piped())
-                            .spawn();
+                        let wl_copy_res = Command::new("wl-copy").stdin(Stdio::piped()).spawn();
                         if let Ok(mut child) = wl_copy_res {
                             if let Some(mut stdin) = child.stdin.take() {
                                 let _ = stdin.write_all(url.as_bytes());
@@ -137,7 +132,10 @@ pub fn save_geometry_with_grim(
                     }
                 }
                 Ok(output) => {
-                    eprintln!("Warning: Upload command failed with exit status: {:?}", output.status);
+                    eprintln!(
+                        "Warning: Upload command failed with exit status: {:?}",
+                        output.status
+                    );
                 }
                 Err(e) => {
                     eprintln!("Warning: Failed to execute upload command: {}", e);
@@ -148,14 +146,23 @@ pub fn save_geometry_with_grim(
 
     if !silent {
         let (summary, message) = if let Some(ref url) = uploaded_url {
-            ("上传完成".to_string(), format!("图片链接已复制到剪贴板:\n{}", url))
+            (
+                "上传完成".to_string(),
+                format!("图片链接已复制到剪贴板:\n{}", url),
+            )
         } else if clipboard_only {
-            ("Screenshot saved".to_string(), "Image copied to the clipboard".to_string())
+            (
+                "Screenshot saved".to_string(),
+                "Image copied to the clipboard".to_string(),
+            )
         } else {
-            ("Screenshot saved".to_string(), format!(
-                "Image saved in <i>{}</i> and copied to the clipboard.",
-                save_fullpath.display()
-            ))
+            (
+                "Screenshot saved".to_string(),
+                format!(
+                    "Image saved in <i>{}</i> and copied to the clipboard.",
+                    save_fullpath.display()
+                ),
+            )
         };
         let icon_name = if clipboard_only {
             "edit-paste".to_string()
@@ -180,7 +187,9 @@ pub fn save_geometry_with_grim(
 fn extract_url(text: &str) -> Option<String> {
     let start_idx = text.find("http://").or_else(|| text.find("https://"))?;
     let rest = &text[start_idx..];
-    let end_idx = rest.find(|c: char| c.is_whitespace() || c == '"' || c == '\'' || c == '<' || c == '>' || c == '\\');
+    let end_idx = rest.find(|c: char| {
+        c.is_whitespace() || c == '"' || c == '\'' || c == '<' || c == '>' || c == '\\'
+    });
     let url = match end_idx {
         Some(i) => &rest[..i],
         None => rest,
@@ -238,9 +247,6 @@ mod tests {
             extract_url("Upload finished. Link: http://example.com/image.png\nThank you!"),
             Some("http://example.com/image.png".to_string())
         );
-        assert_eq!(
-            extract_url("some text without url"),
-            None
-        );
+        assert_eq!(extract_url("some text without url"), None);
     }
 }

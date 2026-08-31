@@ -163,15 +163,17 @@ fn find_monitor_for_geometry(
 
 fn monitor_info_from_hypr(value: &Value) -> Option<MonitorInfo> {
     let scale = value["scale"].as_f64().unwrap_or(1.0);
-    let width = value["width"].as_i64()? as f64;
-    let height = value["height"].as_i64()? as f64;
+    // Hyprland monitor dimensions are already logical compositor coordinates.
+    // Dividing them by scale would make the captured image unnecessarily small.
+    let width = value["width"].as_i64()? as i32;
+    let height = value["height"].as_i64()? as i32;
     Some(MonitorInfo {
         name: value["name"].as_str().unwrap_or("").to_string(),
         scale,
         x: value["x"].as_i64().unwrap_or(0) as i32,
         y: value["y"].as_i64().unwrap_or(0) as i32,
-        width: (width / scale).round() as i32,
-        height: (height / scale).round() as i32,
+        width,
+        height,
     })
 }
 
@@ -443,7 +445,7 @@ mod tests {
                 "scale": 1.0
             }),
         ];
-        let geometry = Geometry::new(1400, 100, 300, 200).unwrap();
+        let geometry = Geometry::new(2600, 100, 300, 200).unwrap();
 
         let monitor = find_monitor_for_geometry(&outputs, &geometry, monitor_info_from_hypr)
             .expect("expected monitor containing region center");
@@ -466,7 +468,7 @@ mod tests {
 
         let monitor = monitor_info_from_hypr(&output).expect("expected monitor info");
 
-        assert_eq!(monitor.width, 1280);
-        assert_eq!(monitor.height, 800);
+        assert_eq!(monitor.width, 2560);
+        assert_eq!(monitor.height, 1600);
     }
 }

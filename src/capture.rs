@@ -92,16 +92,13 @@ fn grab_active_output_hyprctl(debug: bool, cache: &mut HyprctlCache) -> Result<G
 
     let x = current_monitor["x"].as_i64().unwrap_or(0) as i32;
     let y = current_monitor["y"].as_i64().unwrap_or(0) as i32;
-    let width = current_monitor["width"].as_i64().unwrap_or(0) as f64;
-    let height = current_monitor["height"].as_i64().unwrap_or(0) as f64;
-    let scale = current_monitor["scale"].as_f64().unwrap_or(1.0);
+    // Hyprland reports monitor dimensions in compositor (logical) coordinates.
+    // They are already the coordinates expected by grim and must not be divided
+    // by the monitor scale a second time.
+    let width = current_monitor["width"].as_i64().unwrap_or(0) as i32;
+    let height = current_monitor["height"].as_i64().unwrap_or(0) as i32;
 
-    let geometry = Geometry::new(
-        x,
-        y,
-        (width / scale).round() as i32,
-        (height / scale).round() as i32,
-    )?;
+    let geometry = Geometry::new(x, y, width, height)?;
     if debug {
         eprintln!("Active output geometry: {}", geometry);
     }

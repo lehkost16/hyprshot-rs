@@ -231,14 +231,11 @@ pub fn run_external_screenshot_tool(args: &Args, config: &Config, is_ocr: bool) 
     });
 
     // 3. Capture region using grim CLI to PNG bytes
-    let png_bytes = crate::utils::capture_region_with_grim_cli(&geometry)?;
+    let image_bytes = crate::utils::capture_region_with_grim_cli(&geometry)?;
 
     // Stop freeze overlay
     if let Some(guard) = freeze_guard {
         guard.stop()?;
-        std::thread::sleep(std::time::Duration::from_millis(150));
-    } else {
-        std::thread::sleep(std::time::Duration::from_millis(150));
     }
 
     // 4. Save PNG to a unique temp file in /tmp/
@@ -249,7 +246,7 @@ pub fn run_external_screenshot_tool(args: &Args, config: &Config, is_ocr: bool) 
         .context("Failed to create temporary file for screenshot")?;
 
     temp_file
-        .write_all(&png_bytes)
+        .write_all(&image_bytes)
         .context("Failed to write screenshot bytes to temporary file")?;
     let temp_path = temp_file.path().to_path_buf();
     let temp_path_str = temp_path.to_string_lossy().to_string();

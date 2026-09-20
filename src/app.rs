@@ -15,7 +15,7 @@ use crate::external;
 use crate::freeze;
 use crate::longshot;
 use crate::record;
-use crate::save;
+use crate::save::{self, SaveOptions};
 use crate::utils;
 
 pub fn run(mut args: Args) -> Result<()> {
@@ -169,9 +169,6 @@ fn run_screenshot_capture(
     let is_region = matches!(subcommand, Subcommands::Area);
     let freeze = is_region && (args.freeze || config.advanced.freeze_on_region);
 
-    let (_monitor_name, _, _, _) =
-        external::get_active_monitor_info(debug).unwrap_or(("".to_string(), 1.0, 0, 0));
-
     let freeze_guard = if freeze {
         if debug {
             eprintln!("Freeze requested: starting overlay thread");
@@ -210,7 +207,7 @@ fn run_screenshot_capture(
         _ => unreachable!(),
     };
 
-    let png_bytes = if freeze_guard.is_some() {
+    let image_bytes = if freeze_guard.is_some() {
         if debug {
             eprintln!(
                 "Capture region BEFORE stopping freeze overlay to preserve transient windows (like tooltips)"
@@ -224,9 +221,6 @@ fn run_screenshot_capture(
 
     if let Some(guard) = freeze_guard {
         guard.stop()?;
-        std::thread::sleep(std::time::Duration::from_millis(150));
-    } else {
-        std::thread::sleep(std::time::Duration::from_millis(150));
     }
 
     let save_dir = config::get_screenshots_dir(args.output_folder.clone(), config, debug)?;
@@ -244,15 +238,17 @@ fn run_screenshot_capture(
     save::save_geometry(
         &geometry,
         &save_fullpath,
-        clipboard_only,
-        raw,
-        None, // custom external command is run in Edit mode
-        silent,
-        notif_timeout,
-        debug,
-        png_bytes,
-        args.upload,
-        &config.capture.upload_command,
+        SaveOptions {
+            clipboard_only,
+            raw,
+            command: None, // custom external command is run in Edit mode
+            silent,
+            notif_timeout,
+            debug,
+            image_bytes,
+            upload: args.upload,
+            upload_command: config.capture.upload_command.clone(),
+        },
     )?;
 
     Ok(())

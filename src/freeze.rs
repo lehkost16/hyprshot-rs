@@ -6,6 +6,7 @@ mod imp {
     use crate::utils::output_with_timeout;
     use grim_rs::Grim;
     use serde_json::Value;
+    use std::path::{Path, PathBuf};
     use std::process::Command;
     use std::{
         os::fd::{AsRawFd, BorrowedFd},
@@ -42,6 +43,8 @@ mod imp {
         },
         Hyprpicker {
             child: std::process::Child,
+            /// SHM files held open by this hyprpicker process.
+            owned_tempfiles: Vec<PathBuf>,
         },
     }
 
@@ -61,9 +64,15 @@ mod imp {
                     }
                     Ok(())
                 }
-                FreezeGuardType::Hyprpicker { child } => {
+                FreezeGuardType::Hyprpicker {
+                    child,
+                    owned_tempfiles,
+                } => {
                     let _ = child.kill();
                     let _ = child.wait();
+                    // hyprpicker only unlinks its SHM buffer on a clean exit; SIGKILL skips
+                    // that, so reclaim what the child left behind.
+                    remove_hyprpicker_tempfiles(owned_tempfiles);
                     Ok(())
                 }
             }
@@ -79,11 +88,85 @@ mod imp {
                         let _ = j.join();
                     }
                 }
-                FreezeGuardType::Hyprpicker { child } => {
+                FreezeGuardType::Hyprpicker {
+                    child,
+                    owned_tempfiles,
+                } => {
                     let _ = child.kill();
                     let _ = child.wait();
+                    remove_hyprpicker_tempfiles(owned_tempfiles);
                 }
             }
+        }
+    }
+
+    fn is_hyprpicker_tempfile(path: &Path) -> bool {
+        path.file_name()
+            .map(|name| name.to_string_lossy().starts_with(".hyprpicker_"))
+            .unwrap_or(false)
+    }
+
+    /// hyprpicker creates its SHM pool as `$XDG_RUNTIME_DIR/.hyprpicker_XXXXXX` and only
+    /// unlinks it from its destructors, i.e. never when it is killed -- and we always kill
+    /// it. Each leaked buffer is a full-screen ARGB image (16 MB at 2560x1600), and
+    /// `$XDG_RUNTIME_DIR` is a tmpfs sized at 10% of RAM (logging
+    /// `RuntimeDirectorySize=10%`, so 3.0G here). Once that tmpfs is 100% full, faulting a
+    /// page of any mmap'd file on it fails to allocate and the kernel raises
+    /// SIGBUS/BUS_ADRERR -- which killed both hyprpicker and Hyprland's screencopy path
+    /// (`Screenshare::CScreenshareFrame::copyShm` -> `CGLFramebuffer::readPixels`), taking
+    /// the whole session down. So drop everything our child created.
+    ///
+    /// Unlinking is safe even for a file someone else still has mapped or open: only the
+    /// directory entry goes away, the inode and its pages live on until the last fd closes.
+    fn remove_hyprpicker_tempfiles(paths: &[PathBuf]) {
+        for path in paths {
+            if is_hyprpicker_tempfile(path) {
+                let _ = std::fs::remove_file(path);
+            }
+        }
+    }
+
+    fn hyprpicker_tempfiles_for_pid(pid: u32) -> Vec<PathBuf> {
+        let mut paths = Vec::new();
+        let fd_dir = PathBuf::from(format!("/proc/{pid}/fd"));
+        let Ok(entries) = std::fs::read_dir(fd_dir) else {
+            return paths;
+        };
+        for entry in entries.flatten() {
+            let Ok(path) = std::fs::read_link(entry.path()) else {
+                continue;
+            };
+            if is_hyprpicker_tempfile(&path) && !paths.contains(&path) {
+                paths.push(path);
+            }
+        }
+        paths
+    }
+
+    #[cfg(test)]
+    mod cleanup_tests {
+        use super::*;
+
+        #[test]
+        fn removes_only_explicitly_owned_files() {
+            let dir = tempfile::tempdir().expect("tempdir");
+            let mine = dir.path().join(".hyprpicker_MINE");
+            std::fs::write(&mine, b"new").unwrap();
+
+            remove_hyprpicker_tempfiles(std::slice::from_ref(&mine));
+
+            assert!(!mine.exists());
+        }
+
+        #[test]
+        fn matches_only_hyprpicker_buffer_names() {
+            assert!(is_hyprpicker_tempfile(Path::new(
+                "/run/user/1000/.hyprpicker_4KgOwj"
+            )));
+            assert!(!is_hyprpicker_tempfile(Path::new(
+                "/run/user/1000/hyshot.pid"
+            )));
+            assert!(!is_hyprpicker_tempfile(Path::new("/run/user/1000")));
         }
     }
 
@@ -188,8 +271,12 @@ mod imp {
                     }
                     // Wait a short duration for the overlay to map
                     thread::sleep(Duration::from_millis(200));
+                    let owned_tempfiles = hyprpicker_tempfiles_for_pid(child.id());
                     return Ok(FreezeGuard {
-                        guard: FreezeGuardType::Hyprpicker { child },
+                        guard: FreezeGuardType::Hyprpicker {
+                            child,
+                            owned_tempfiles,
+                        },
                     });
                 }
                 Err(e) => {

@@ -6,42 +6,46 @@ use std::process::{Command, Stdio};
 
 use crate::geometry::Geometry;
 
+pub struct SaveOptions {
+    pub clipboard_only: bool,
+    pub raw: bool,
+    pub command: Option<Vec<String>>,
+    pub silent: bool,
+    pub notif_timeout: u32,
+    pub debug: bool,
+    pub image_bytes: Option<Vec<u8>>,
+    pub upload: bool,
+    pub upload_command: String,
+}
+
 #[cfg(feature = "grim")]
 #[allow(clippy::too_many_arguments)]
 pub fn save_geometry_with_grim(
     geometry: &Geometry,
     save_fullpath: &PathBuf,
-    clipboard_only: bool,
-    raw: bool,
-    command: Option<Vec<String>>,
-    silent: bool,
-    notif_timeout: u32,
-    debug: bool,
-    png_bytes: Option<Vec<u8>>,
-    upload: bool,
-    upload_command: &str,
+    options: SaveOptions,
 ) -> Result<()> {
     use std::io::Write;
 
-    if debug {
+    if options.debug {
         eprintln!("Saving geometry with grim CLI: {}", geometry);
     }
 
-    let png_bytes = match png_bytes {
+    let image_bytes = match options.image_bytes {
         Some(bytes) => bytes,
         None => crate::utils::capture_region_with_grim_cli(geometry)?,
     };
 
-    if raw {
-        std::io::stdout().write_all(&png_bytes)?;
+    if options.raw {
+        std::io::stdout().write_all(&image_bytes)?;
         return Ok(());
     }
 
-    if !clipboard_only {
+    if !options.clipboard_only {
         create_dir_all(save_fullpath.parent().unwrap())
             .context("Failed to create screenshot directory")?;
 
-        write(save_fullpath, &png_bytes).context(format!(
+        write(save_fullpath, &image_bytes).context(format!(
             "Failed to save screenshot to '{}'",
             save_fullpath.display()
         ))?;
@@ -57,7 +61,7 @@ pub fn save_geometry_with_grim(
                 .stdin
                 .as_mut()
                 .unwrap()
-                .write_all(&png_bytes)
+                .write_all(&image_bytes)
                 .context("Failed to write to wl-copy stdin")?;
             // Best-effort in normal mode: don't block on wl-copy completion.
             std::mem::drop(wl_copy);
@@ -67,7 +71,7 @@ pub fn save_geometry_with_grim(
             eprintln!("Warning: failed to copy screenshot to clipboard: {}", err);
         }
 
-        if let Some(cmd) = command {
+        if let Some(cmd) = options.command {
             let cmd_status = Command::new(&cmd[0])
                 .args(&cmd[1..])
                 .arg(save_fullpath)
@@ -88,33 +92,35 @@ pub fn save_geometry_with_grim(
             .stdin
             .as_mut()
             .unwrap()
-            .write_all(&png_bytes)
+            .write_all(&image_bytes)
             .context("Failed to write to wl-copy stdin")?;
         std::mem::drop(wl_copy);
     }
 
     let mut uploaded_url: Option<String> = None;
-    if upload && !clipboard_only && !raw {
-        if upload_command.is_empty() {
+    if options.upload && !options.clipboard_only && !options.raw {
+        if options.upload_command.is_empty() {
             eprintln!("Warning: Upload command is not configured in hyshot config file.");
-            if !silent {
+            if !options.silent {
                 let _ = Notification::new()
                     .summary("上传未配置")
                     .body("请在配置文件中设置 capture.upload_command")
-                    .timeout(notif_timeout as i32)
+                    .timeout(options.notif_timeout as i32)
                     .appname("Hyshot")
                     .show();
             }
         } else {
-            let cmd_str = upload_command.replace("{path}", &save_fullpath.to_string_lossy());
-            if debug {
+            let cmd_str = options
+                .upload_command
+                .replace("{path}", &save_fullpath.to_string_lossy());
+            if options.debug {
                 eprintln!("Running upload command: {}", cmd_str);
             }
             let upload_res = Command::new("sh").arg("-c").arg(&cmd_str).output();
             match upload_res {
                 Ok(output) if output.status.success() => {
                     let stdout_str = String::from_utf8_lossy(&output.stdout);
-                    if debug {
+                    if options.debug {
                         eprintln!("Upload output: {}", stdout_str);
                     }
                     if let Some(url) = extract_url(&stdout_str) {
@@ -144,13 +150,13 @@ pub fn save_geometry_with_grim(
         }
     }
 
-    if !silent {
+    if !options.silent {
         let (summary, message) = if let Some(ref url) = uploaded_url {
             (
                 "上传完成".to_string(),
                 format!("图片链接已复制到剪贴板:\n{}", url),
             )
-        } else if clipboard_only {
+        } else if options.clipboard_only {
             (
                 "Screenshot saved".to_string(),
                 "Image copied to the clipboard".to_string(),
@@ -164,7 +170,7 @@ pub fn save_geometry_with_grim(
                 ),
             )
         };
-        let icon_name = if clipboard_only {
+        let icon_name = if options.clipboard_only {
             "edit-paste".to_string()
         } else {
             save_fullpath.to_str().unwrap_or("screenshot").to_string()
@@ -173,7 +179,7 @@ pub fn save_geometry_with_grim(
             .summary(&summary)
             .body(&message)
             .icon(&icon_name)
-            .timeout(notif_timeout as i32)
+            .timeout(options.notif_timeout as i32)
             .appname("Hyshot")
             .show()
         {
@@ -201,30 +207,10 @@ fn extract_url(text: &str) -> Option<String> {
 pub fn save_geometry(
     geometry: &Geometry,
     save_fullpath: &PathBuf,
-    clipboard_only: bool,
-    raw: bool,
-    command: Option<Vec<String>>,
-    silent: bool,
-    notif_timeout: u32,
-    debug: bool,
-    png_bytes: Option<Vec<u8>>,
-    upload: bool,
-    upload_command: &str,
+    options: SaveOptions,
 ) -> Result<()> {
     #[cfg(feature = "grim")]
-    return save_geometry_with_grim(
-        geometry,
-        save_fullpath,
-        clipboard_only,
-        raw,
-        command,
-        silent,
-        notif_timeout,
-        debug,
-        png_bytes,
-        upload,
-        upload_command,
-    );
+    return save_geometry_with_grim(geometry, save_fullpath, options);
     #[cfg(not(feature = "grim"))]
     compile_error!("Feature 'grim' must be enabled to save screenshots");
 }

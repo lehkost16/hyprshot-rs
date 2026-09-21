@@ -436,3 +436,19 @@ fn test_get_screenshots_dir_with_tilde() {
     };
     assert_eq!(result, home.join("Screenshots"));
 }
+#[test]
+fn built_in_editor_cli_and_default() {
+    use clap::Parser;
+    let args =
+        crate::cli::Args::try_parse_from(["hyshot", "edit", "/tmp/image with spaces.png"]).unwrap();
+    match args.subcommand.unwrap() {
+        crate::cli::Subcommands::Edit { images } => {
+            assert_eq!(
+                images,
+                vec![std::path::PathBuf::from("/tmp/image with spaces.png")]
+            );
+        }
+        _ => panic!("expected edit command"),
+    }
+    assert_eq!(crate::config::Config::default().annotate.command, "builtin");
+}

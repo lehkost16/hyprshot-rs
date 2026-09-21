@@ -249,6 +249,9 @@ pub fn run_external_screenshot_tool(args: &Args, config: &Config, is_ocr: bool) 
         .write_all(&image_bytes)
         .context("Failed to write screenshot bytes to temporary file")?;
     let temp_path = temp_file.path().to_path_buf();
+    if !is_ocr && config.annotate.command.trim() == "builtin" {
+        return annotator::open_images(vec![temp_path.into_os_string()]);
+    }
     let temp_path_str = temp_path.to_string_lossy().to_string();
 
     // 5. Build external command by replacing placeholders

@@ -102,6 +102,9 @@ pub fn run(mut args: Args) -> Result<()> {
     };
 
     match subcommand {
+        Subcommands::Edit { images } => {
+            annotator::open_images(images.into_iter().map(|p| p.into_os_string()).collect())
+        }
         Subcommands::Annotate => external::run_external_screenshot_tool(&args, &config, false),
         Subcommands::Ocr => external::run_external_screenshot_tool(&args, &config, true),
         Subcommands::Longshot => longshot::handle_longshot(&args, &config),
@@ -283,6 +286,7 @@ Commands:
   win           Take a screenshot of a window
   area          Take a screenshot of a selected region
   annotate      Take a screenshot of a selected region and open in annotation tool
+  edit          Open existing images in the built-in annotation window
   ocr           Take a screenshot of a selected region and perform OCR
   in5           Take a screenshot of the current monitor after 5s countdown
   in10          Take a screenshot of the current monitor after 10s countdown

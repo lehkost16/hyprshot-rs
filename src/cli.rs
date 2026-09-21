@@ -83,6 +83,11 @@ pub struct Args {
 
 #[derive(Subcommand, Clone, Debug)]
 pub enum Subcommands {
+    #[command(about = "Open existing images in the built-in annotation window")]
+    Edit {
+        #[arg(value_name = "IMAGE")]
+        images: Vec<PathBuf>,
+    },
     #[command(about = "Screenshot of current monitor")]
     Now,
     #[command(about = "Screenshot of active or selected window")]

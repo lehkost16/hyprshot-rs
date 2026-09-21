@@ -137,7 +137,7 @@ fn default_upload_command() -> String {
 }
 
 fn default_annotate_command() -> String {
-    "satty --filename {path}".to_string()
+    "builtin".to_string()
 }
 
 fn default_ocr_command() -> String {

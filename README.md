@@ -52,6 +52,23 @@ Unlike original projects that use shell wrappers, `hyshot` compiles to a single 
 
 ## Usage
 
+### Integrated annotation
+
+Build with the repository's nightly Rust toolchain:
+
+```bash
+cargo build --release
+hyshot --set annotate.command builtin
+hyshot annotate
+hyshot edit /path/to/image.png
+```
+
+`hyshot annotate` captures a region and opens the built-in editor when
+`annotate.command = "builtin"`. `hyshot edit` opens existing images (or a
+file picker with no paths), without taking another screenshot. The editor
+retains annotator's settings and toolbar expand/collapse control.
+Existing external annotation commands remain supported.
+
 ### Command Syntax
 ```bash
 hyshot [options ..] <command>
@@ -174,7 +191,7 @@ Here is a complete list of all available configuration sections and options:
 
 #### `[annotate]`
 * **`command`** (string) — External command to execute for annotations when using `hyshot annotate`. `{path}` is replaced with the screenshot path.
-  * *Default:* `"satty --filename {path}"`
+  * *Default:* `"builtin"` opens the integrated annotator. Existing custom commands remain supported.
 
 #### `[ocr]`
 * **`command`** (string) — External OCR execution command used when running `hyshot ocr`. `{path}` is replaced with the screenshot path.

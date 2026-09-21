@@ -43,8 +43,8 @@ mod imp {
         },
         Hyprpicker {
             child: std::process::Child,
-            /// SHM files held open by this hyprpicker process.
-            owned_tempfiles: Vec<PathBuf>,
+            /// Private runtime directory containing every SHM file from this child.
+            runtime_dir: Option<tempfile::TempDir>,
         },
     }
 
@@ -64,16 +64,8 @@ mod imp {
                     }
                     Ok(())
                 }
-                FreezeGuardType::Hyprpicker {
-                    child,
-                    owned_tempfiles,
-                } => {
-                    let _ = child.kill();
-                    let _ = child.wait();
-                    // hyprpicker only unlinks its SHM buffer on a clean exit; SIGKILL skips
-                    // that, so reclaim what the child left behind.
-                    remove_hyprpicker_tempfiles(owned_tempfiles);
-                    Ok(())
+                FreezeGuardType::Hyprpicker { child, runtime_dir } => {
+                    stop_hyprpicker(child, runtime_dir)
                 }
             }
         }
@@ -88,59 +80,57 @@ mod imp {
                         let _ = j.join();
                     }
                 }
-                FreezeGuardType::Hyprpicker {
-                    child,
-                    owned_tempfiles,
-                } => {
-                    let _ = child.kill();
-                    let _ = child.wait();
-                    remove_hyprpicker_tempfiles(owned_tempfiles);
+                FreezeGuardType::Hyprpicker { child, runtime_dir } => {
+                    if let Err(err) = stop_hyprpicker(child, runtime_dir) {
+                        eprintln!("Warning: {err:#}");
+                    }
                 }
             }
         }
     }
 
-    fn is_hyprpicker_tempfile(path: &Path) -> bool {
-        path.file_name()
-            .map(|name| name.to_string_lossy().starts_with(".hyprpicker_"))
-            .unwrap_or(false)
+    fn wayland_socket(display: &Path, runtime: Option<&Path>) -> Result<PathBuf> {
+        if display.is_absolute() {
+            return Ok(display.to_path_buf());
+        }
+        let runtime =
+            runtime.context("XDG_RUNTIME_DIR is required for a relative Wayland display")?;
+        anyhow::ensure!(runtime.is_absolute(), "XDG_RUNTIME_DIR must be absolute");
+        Ok(runtime.join(display))
     }
 
-    /// hyprpicker creates its SHM pool as `$XDG_RUNTIME_DIR/.hyprpicker_XXXXXX` and only
-    /// unlinks it from its destructors, i.e. never when it is killed -- and we always kill
-    /// it. Each leaked buffer is a full-screen ARGB image (16 MB at 2560x1600), and
-    /// `$XDG_RUNTIME_DIR` is a tmpfs sized at 10% of RAM (logging
-    /// `RuntimeDirectorySize=10%`, so 3.0G here). Once that tmpfs is 100% full, faulting a
-    /// page of any mmap'd file on it fails to allocate and the kernel raises
-    /// SIGBUS/BUS_ADRERR -- which killed both hyprpicker and Hyprland's screencopy path
-    /// (`Screenshare::CScreenshareFrame::copyShm` -> `CGLFramebuffer::readPixels`), taking
-    /// the whole session down. So drop everything our child created.
-    ///
-    /// Unlinking is safe even for a file someone else still has mapped or open: only the
-    /// directory entry goes away, the inode and its pages live on until the last fd closes.
-    fn remove_hyprpicker_tempfiles(paths: &[PathBuf]) {
-        for path in paths {
-            if is_hyprpicker_tempfile(path) {
-                let _ = std::fs::remove_file(path);
+    fn stop_hyprpicker(
+        child: &mut std::process::Child,
+        runtime_dir: &mut Option<tempfile::TempDir>,
+    ) -> Result<()> {
+        if runtime_dir.is_none() {
+            return Ok(());
+        }
+        if child.try_wait()?.is_none() {
+            // Upstream hyprpicker #155 cleans its buffers on SIGTERM, not SIGKILL.
+            let status = Command::new("kill")
+                .args(["-TERM", "--", &child.id().to_string()])
+                .status()
+                .context("Failed to send SIGTERM to hyprpicker")?;
+            if !status.success() && child.try_wait()?.is_none() {
+                anyhow::bail!("Failed to terminate hyprpicker");
+            }
+            let deadline = std::time::Instant::now() + Duration::from_secs(2);
+            while child.try_wait()?.is_none() {
+                if std::time::Instant::now() >= deadline {
+                    eprintln!("Warning: hyprpicker did not exit after SIGTERM; forcing shutdown");
+                    child.kill().context("Failed to stop hyprpicker")?;
+                    break;
+                }
+                thread::sleep(Duration::from_millis(20));
             }
         }
-    }
-
-    fn hyprpicker_tempfiles_for_pid(pid: u32) -> Vec<PathBuf> {
-        let mut paths = Vec::new();
-        let fd_dir = PathBuf::from(format!("/proc/{pid}/fd"));
-        let Ok(entries) = std::fs::read_dir(fd_dir) else {
-            return paths;
-        };
-        for entry in entries.flatten() {
-            let Ok(path) = std::fs::read_link(entry.path()) else {
-                continue;
-            };
-            if is_hyprpicker_tempfile(&path) && !paths.contains(&path) {
-                paths.push(path);
-            }
+        child.wait().context("Failed to reap hyprpicker")?;
+        if let Some(dir) = runtime_dir.take() {
+            dir.close()
+                .context("Failed to remove hyprpicker runtime directory")?;
         }
-        paths
+        Ok(())
     }
 
     #[cfg(test)]
@@ -148,25 +138,43 @@ mod imp {
         use super::*;
 
         #[test]
-        fn removes_only_explicitly_owned_files() {
-            let dir = tempfile::tempdir().expect("tempdir");
-            let mine = dir.path().join(".hyprpicker_MINE");
-            std::fs::write(&mine, b"new").unwrap();
-
-            remove_hyprpicker_tempfiles(std::slice::from_ref(&mine));
-
-            assert!(!mine.exists());
+        fn resolves_display_before_overriding_runtime() {
+            assert_eq!(
+                wayland_socket(Path::new("wayland-1"), Some(Path::new("/run/user/1000"))).unwrap(),
+                Path::new("/run/user/1000/wayland-1")
+            );
+            assert_eq!(
+                wayland_socket(Path::new("/tmp/display"), None).unwrap(),
+                Path::new("/tmp/display")
+            );
+            assert!(wayland_socket(Path::new("wayland-1"), None).is_err());
         }
 
         #[test]
-        fn matches_only_hyprpicker_buffer_names() {
-            assert!(is_hyprpicker_tempfile(Path::new(
-                "/run/user/1000/.hyprpicker_4KgOwj"
-            )));
-            assert!(!is_hyprpicker_tempfile(Path::new(
-                "/run/user/1000/hyshot.pid"
-            )));
-            assert!(!is_hyprpicker_tempfile(Path::new("/run/user/1000")));
+        fn stop_and_drop_remove_late_closed_files_without_touching_other_sessions() {
+            for explicit_stop in [true, false] {
+                let dir = tempfile::tempdir().unwrap();
+                let path = dir.path().to_path_buf();
+                let other = tempfile::tempdir().unwrap();
+                let other_file = other.path().join(".hyprpicker_OTHER");
+                std::fs::write(&other_file, b"other").unwrap();
+                let child = Command::new("sleep").arg("30").spawn().unwrap();
+                let guard = FreezeGuard {
+                    guard: FreezeGuardType::Hyprpicker {
+                        child,
+                        runtime_dir: Some(dir),
+                    },
+                };
+                // Created after guard construction, with no open descriptor to discover.
+                std::fs::write(path.join(".hyprpicker_LATE"), b"buffer").unwrap();
+                if explicit_stop {
+                    guard.stop().unwrap();
+                } else {
+                    drop(guard);
+                }
+                assert!(!path.exists());
+                assert!(other_file.exists());
+            }
         }
     }
 
@@ -264,18 +272,33 @@ mod imp {
             if debug {
                 eprintln!("Freeze: detected Hyprland session, attempting to spawn hyprpicker");
             }
-            match Command::new("hyprpicker").arg("-r").arg("-z").spawn() {
-                Ok(child) => {
+            let display = std::env::var_os("WAYLAND_DISPLAY").unwrap_or_else(|| "wayland-0".into());
+            let original_runtime = std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from);
+            let socket = wayland_socket(Path::new(&display), original_runtime.as_deref())?;
+            let runtime_dir = tempfile::Builder::new()
+                .prefix("hyshot-hyprpicker-")
+                .tempdir()
+                .context("Failed to create private hyprpicker runtime directory")?;
+            // Keep the original compositor socket while isolating all child SHM files.
+            match Command::new("hyprpicker")
+                .args(["-r", "-z"])
+                .env("XDG_RUNTIME_DIR", runtime_dir.path())
+                .env("WAYLAND_DISPLAY", socket)
+                .spawn()
+            {
+                Ok(mut child) => {
                     if debug {
                         eprintln!("Freeze: successfully spawned hyprpicker -r -z");
                     }
                     // Wait a short duration for the overlay to map
                     thread::sleep(Duration::from_millis(200));
-                    let owned_tempfiles = hyprpicker_tempfiles_for_pid(child.id());
+                    if let Some(status) = child.try_wait()? {
+                        anyhow::bail!("hyprpicker exited during startup: {status}");
+                    }
                     return Ok(FreezeGuard {
                         guard: FreezeGuardType::Hyprpicker {
                             child,
-                            owned_tempfiles,
+                            runtime_dir: Some(runtime_dir),
                         },
                     });
                 }

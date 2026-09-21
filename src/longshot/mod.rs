@@ -14,6 +14,8 @@ use crate::config;
 use crate::selector;
 use crate::utils;
 
+mod canvas;
+mod decoder;
 pub mod overlay;
 pub mod stitcher;
 
@@ -35,9 +37,6 @@ struct LongshotState {
 pub struct StitchRequest {
     pub input: std::path::PathBuf,
     pub output: Option<std::path::PathBuf>,
-    pub width: Option<i32>,
-    pub height: Option<i32>,
-    pub scale: f64,
     pub debug: bool,
     pub silent: bool,
     pub notif_timeout: u32,
@@ -80,15 +79,9 @@ pub fn handle_longshot(args: &Args, config: &config::Config) -> Result<()> {
         let stitch_res = stitcher::stitch_video(
             Path::new(&state.video_path),
             Path::new(&state.output_path),
-            state.w,
-            state.h,
-            state.scale,
             debug,
             config,
         );
-
-        // Delete state file
-        let _ = fs::remove_file(&state_file);
 
         match stitch_res {
             Ok(()) => {
@@ -120,6 +113,7 @@ pub fn handle_longshot(args: &Args, config: &config::Config) -> Result<()> {
 
                 // Clean up temp video file
                 let _ = fs::remove_file(&state.video_path);
+                let _ = fs::remove_file(&state_file);
 
                 if debug {
                     eprintln!(
@@ -129,16 +123,19 @@ pub fn handle_longshot(args: &Args, config: &config::Config) -> Result<()> {
                 }
             }
             Err(err) => {
-                let _ = fs::remove_file(&state.video_path);
                 if !silent {
                     let _ = Notification::new()
                         .summary("Longshot error")
-                        .body(&format!("拼接失败: {}", err))
+                        .body(&format!(
+                            "拼接失败: {}\n源视频保留于: {}",
+                            err, state.video_path
+                        ))
                         .timeout(notif_timeout as i32)
                         .appname("Shot")
                         .show();
                 }
-                return Err(err);
+                return Err(err)
+                    .context(format!("Source recording retained at {}", state.video_path));
             }
         }
 
@@ -238,9 +235,6 @@ pub fn handle_stitch(request: StitchRequest, config: &config::Config) -> Result<
     let StitchRequest {
         input,
         output,
-        width,
-        height,
-        scale,
         debug,
         silent,
         notif_timeout,
@@ -259,13 +253,6 @@ pub fn handle_stitch(request: StitchRequest, config: &config::Config) -> Result<
         }
     };
 
-    let (w, h) = match (width, height) {
-        (Some(w), Some(h)) => (w, h),
-        _ => stitcher::get_video_dimensions(&input)
-            .map(|(pw, ph)| (pw as i32, ph as i32))
-            .unwrap_or_else(|_| (1920, 1080)),
-    };
-
     if !silent {
         let _ = Notification::new()
             .summary("Stitching video...")
@@ -275,7 +262,7 @@ pub fn handle_stitch(request: StitchRequest, config: &config::Config) -> Result<
             .show();
     }
 
-    stitcher::stitch_video(&input, &output_path, w, h, scale, debug, config)?;
+    stitcher::stitch_video(&input, &output_path, debug, config)?;
 
     if let Ok(png_bytes) = std::fs::read(&output_path) {
         let wl_copy_cmd = std::process::Command::new("wl-copy")

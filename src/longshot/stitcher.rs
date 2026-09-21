@@ -1,11 +1,6 @@
 use anyhow::{Context, Result};
-use image::{ImageBuffer, Rgb};
 use rayon::prelude::*;
-use std::{
-    io::{self, Read},
-    path::Path,
-    process::{Command, Stdio},
-};
+use std::{path::Path, process::Command};
 
 // ── Configuration ────────────────────────────────────────────────────
 
@@ -41,7 +36,12 @@ pub fn get_video_dimensions(video_path: &Path) -> Result<(usize, usize)> {
     if parts.len() != 2 {
         anyhow::bail!("invalid ffprobe output");
     }
-    Ok((parts[0].parse()?, parts[1].parse()?))
+    let dimensions = (parts[0].parse::<usize>()?, parts[1].parse::<usize>()?);
+    anyhow::ensure!(
+        dimensions.0 > 0 && dimensions.1 > 0,
+        "Video has empty dimensions"
+    );
+    Ok(dimensions)
 }
 
 /// Detect static top (Header) and bottom (Footer) borders by analyzing row variance across frames.
@@ -254,7 +254,7 @@ fn match_columns(input: MatchInput<'_>) -> (i32, f32) {
         sad_threshold,
         debug,
     } = input;
-    let max = active_h - min_overlap;
+    let max = active_h.saturating_sub(min_overlap);
     if max < 1 {
         return (0, 255.0);
     }
@@ -383,404 +383,287 @@ fn calc_skip_and_predict(
     }
 }
 
-// ── 2D Canvas ────────────────────────────────────────────────────────
+// The offline source adapter uses two passes: bounded border sampling, then
+// incremental matching. Neither the matching engine nor its canvas owns ffmpeg.
 
-struct Canvas2D {
-    pixels: Vec<u8>,
+use super::canvas::{Canvas, MAX_CANVAS_BYTES};
+use super::decoder::FrameReader;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StitchUpdate {
+    FirstFrame,
+    Appended,
+    NoProgress,
+    NoMatch,
+}
+
+struct ReferenceFrame {
+    gray: Vec<u8>,
+    cols: Vec<f32>,
+}
+
+pub struct Stitcher {
     width: usize,
     height: usize,
-    origin_x: i32,
-    origin_y: i32,
+    top: usize,
+    bottom: usize,
+    canvas: Canvas,
+    previous: Option<ReferenceFrame>,
+    header: Vec<u8>,
+    footer: Vec<u8>,
+    position: i64,
+    history: Vec<(usize, i32, f32)>,
+    frame_index: usize,
+    next_match: usize,
+    placed: usize,
+    rejected: usize,
+    sad_threshold: f32,
+    max_skip: usize,
+    target_overlap: f32,
+    debug: bool,
 }
 
-struct FramePlacement<'a> {
-    frame: &'a [u8],
-    frame_w: usize,
-    frame_h: usize,
-    top_border: usize,
-    bottom_border: usize,
-    gx: i32,
-    gy: i32,
+impl Stitcher {
+    pub fn new(
+        width: usize,
+        height: usize,
+        borders: (usize, usize),
+        config: &crate::config::Config,
+        debug: bool,
+    ) -> Result<Self> {
+        let (top, bottom) = borders;
+        anyhow::ensure!(
+            config.longshot.sad_threshold.is_finite() && config.longshot.sad_threshold > 0.0,
+            "longshot.sad_threshold must be finite and positive"
+        );
+        anyhow::ensure!(
+            config.longshot.max_skip > 0
+                && config.longshot.target_overlap.is_finite()
+                && config.longshot.target_overlap > 0.0
+                && config.longshot.target_overlap <= 1.0,
+            "Invalid longshot skip/overlap settings"
+        );
+        anyhow::ensure!(
+            top.checked_add(bottom).is_some_and(|sum| sum < height),
+            "No active content after border detection"
+        );
+        Ok(Self {
+            width,
+            height,
+            top,
+            bottom,
+            canvas: Canvas::new(width, MAX_CANVAS_BYTES)?,
+            previous: None,
+            header: Vec::new(),
+            footer: Vec::new(),
+            position: 0,
+            history: Vec::new(),
+            frame_index: 0,
+            next_match: 0,
+            placed: 0,
+            rejected: 0,
+            sad_threshold: config.longshot.sad_threshold,
+            max_skip: config.longshot.max_skip.max(1),
+            target_overlap: config.longshot.target_overlap,
+            debug,
+        })
+    }
+
+    pub fn push_frame(&mut self, rgb: Vec<u8>) -> Result<StitchUpdate> {
+        anyhow::ensure!(
+            rgb.len() == self.width * self.height * 3,
+            "Decoded frame size changed"
+        );
+        let index = self.frame_index;
+        self.frame_index += 1;
+        if index < self.next_match {
+            return Ok(StitchUpdate::NoProgress);
+        }
+        let gray = grayscale(&rgb);
+        let active_h = self.height - self.top - self.bottom;
+        let cols = column_sample(&gray, self.width, self.height, self.top, self.bottom);
+        let first = self.previous.is_none();
+        let mut offset = 0;
+        if let Some(previous) = &self.previous {
+            let (dy, sad) = match_columns(MatchInput {
+                previous: FrameSample {
+                    cols: &previous.cols,
+                    y: &previous.gray,
+                },
+                current: FrameSample {
+                    cols: &cols,
+                    y: &gray,
+                },
+                w: self.width,
+                active_h,
+                top_border: self.top,
+                predict: self.history.last().map(|entry| entry.1).unwrap_or(0),
+                min_overlap: ((active_h as f32 * MIN_OVERLAP_FRAC).max(20.0) as usize)
+                    .min(active_h.saturating_sub(1)),
+                sad_threshold: self.sad_threshold,
+                debug: self.debug,
+            });
+            if dy.abs() < 3 && sad < self.sad_threshold * 0.3 {
+                return Ok(StitchUpdate::NoProgress);
+            }
+            if !sad.is_finite() || sad >= self.sad_threshold * RELIABLE_MULTIPLIER {
+                self.rejected += 1;
+                return Ok(StitchUpdate::NoMatch);
+            }
+            offset = dy;
+        }
+        let position = self
+            .position
+            .checked_add(i64::from(offset))
+            .context("Stitch position overflow")?;
+        let old_origin = self.canvas.origin();
+        let old_end = self.canvas.end();
+        let row_bytes = self.width * 3;
+        let body = &rgb[self.top * row_bytes..(self.height - self.bottom) * row_bytes];
+        let grew = self.canvas.place(body, position)?;
+        if first || position < old_origin {
+            self.header = rgb[..self.top * row_bytes].to_vec();
+        }
+        if first || position + active_h as i64 > old_end {
+            self.footer = rgb[(self.height - self.bottom) * row_bytes..].to_vec();
+        }
+        self.previous = Some(ReferenceFrame { gray, cols });
+        self.position = position;
+        self.placed += 1;
+        if !first {
+            self.history.push((index, offset, 0.0));
+            if self.history.len() > VELOCITY_HISTORY {
+                self.history.remove(0);
+            }
+            let (skip, _) =
+                calc_skip_and_predict(&self.history, active_h, self.max_skip, self.target_overlap);
+            self.next_match = index.saturating_add(skip);
+        }
+        Ok(if first {
+            StitchUpdate::FirstFrame
+        } else if grew {
+            StitchUpdate::Appended
+        } else {
+            StitchUpdate::NoProgress
+        })
+    }
+
+    pub fn finish(mut self) -> Result<image::RgbImage> {
+        anyhow::ensure!(self.previous.is_some(), "No frames decoded");
+        anyhow::ensure!(
+            self.placed > 1 || self.rejected == 0,
+            "No trustworthy overlap found; refusing to save an incomplete long screenshot"
+        );
+        if self.top > 0 {
+            self.canvas
+                .place(&self.header, self.canvas.origin() - self.top as i64)?;
+        }
+        if self.bottom > 0 {
+            self.canvas.place(&self.footer, self.canvas.end())?;
+        }
+        if self.debug {
+            eprintln!(
+                "Longshot: {} source frames, {} accepted, {} rejected; {}x{} pixels",
+                self.frame_index,
+                self.placed,
+                self.rejected,
+                self.width,
+                self.canvas.height()
+            );
+        }
+        self.canvas.into_image()
+    }
 }
 
-impl Canvas2D {
-    fn new(w: usize, h: usize) -> Self {
+fn grayscale(rgb: &[u8]) -> Vec<u8> {
+    rgb.par_chunks_exact(3)
+        .map(|p| ((77 * u32::from(p[0]) + 150 * u32::from(p[1]) + 29 * u32::from(p[2])) >> 8) as u8)
+        .collect()
+}
+
+/// Keep at most five luminance frames spread through the source, never RGB history.
+struct BorderSamples {
+    frames: Vec<Vec<u8>>,
+    seen: u64,
+    random: u64,
+}
+
+impl BorderSamples {
+    fn new() -> Self {
         Self {
-            pixels: vec![0u8; w * h * 3],
-            width: w,
-            height: h,
-            origin_x: 0,
-            origin_y: 0,
+            frames: Vec::new(),
+            seen: 0,
+            random: 0x485953484f54,
         }
     }
 
-    fn grow_to_fit(&mut self, x: i32, y: i32, w: usize, h: usize) {
-        let canvas_left = self.origin_x;
-        let canvas_right = self.origin_x + self.width as i32;
-        let canvas_top = self.origin_y;
-        let canvas_bottom = self.origin_y + self.height as i32;
-
-        let rect_left = x;
-        let rect_right = x + w as i32;
-        let rect_top = y;
-        let rect_bottom = y + h as i32;
-
-        let need_left = (canvas_left - rect_left).max(0) as usize;
-        let need_top = (canvas_top - rect_top).max(0) as usize;
-        let need_right = (rect_right - canvas_right).max(0) as usize;
-        let need_bottom = (rect_bottom - canvas_bottom).max(0) as usize;
-
-        let new_origin_x = self.origin_x - need_left as i32;
-        let new_origin_y = self.origin_y - need_top as i32;
-        let new_w = self.width + need_left + need_right;
-        let new_h = self.height + need_top + need_bottom;
-
-        if new_w == self.width && new_h == self.height {
-            return;
-        }
-
-        if new_w as u64 * new_h as u64 > 200_000_000 {
-            return;
-        }
-
-        let mut new_pixels = vec![0u8; new_w * new_h * 3];
-        let old_x = (self.origin_x - new_origin_x) as usize;
-        let old_y = (self.origin_y - new_origin_y) as usize;
-        for y in 0..self.height {
-            let src_start = y * self.width * 3;
-            let dst_start = ((old_y + y) * new_w + old_x) * 3;
-            new_pixels[dst_start..dst_start + self.width * 3]
-                .copy_from_slice(&self.pixels[src_start..src_start + self.width * 3]);
-        }
-        self.pixels = new_pixels;
-        self.width = new_w;
-        self.height = new_h;
-        self.origin_x = new_origin_x;
-        self.origin_y = new_origin_y;
-    }
-
-    fn place_frame_cropped(&mut self, placement: FramePlacement<'_>) {
-        let active_h = placement
-            .frame_h
-            .saturating_sub(placement.top_border + placement.bottom_border);
-        if active_h == 0 {
-            return;
-        }
-
-        let cx = (placement.gx - self.origin_x) as usize;
-        let cy = (placement.gy - self.origin_y) as usize;
-        for y in 0..active_h {
-            let src_y = placement.top_border + y;
-            let src = src_y * placement.frame_w * 3;
-            let dst = ((cy + y) * self.width + cx) * 3;
-            let len = placement.frame_w * 3;
-            if dst + len <= self.pixels.len() && src + len <= placement.frame.len() {
-                self.pixels[dst..dst + len].copy_from_slice(&placement.frame[src..src + len]);
+    fn push(&mut self, gray: Vec<u8>) {
+        self.seen += 1;
+        if self.frames.len() < 5 {
+            self.frames.push(gray);
+        } else {
+            // Deterministic reservoir sampling keeps the first frame and four samples.
+            self.random = self
+                .random
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1);
+            let index = self.random % (self.seen - 1);
+            if index < 4 {
+                self.frames[index as usize + 1] = gray;
             }
         }
-    }
-
-    fn overlay_header(&mut self, frame: &[u8], fw: usize, top_border: usize) {
-        if top_border == 0 {
-            return;
-        }
-        for y in 0..top_border.min(self.height) {
-            let src = y * fw * 3;
-            let dst = y * self.width * 3;
-            let len = (fw * 3).min(self.width * 3);
-            if dst + len <= self.pixels.len() && src + len <= frame.len() {
-                self.pixels[dst..dst + len].copy_from_slice(&frame[src..src + len]);
-            }
-        }
-    }
-
-    fn overlay_footer(&mut self, frame: &[u8], fw: usize, fh: usize, bottom_border: usize) {
-        if bottom_border == 0 || bottom_border > self.height || bottom_border > fh {
-            return;
-        }
-        let start_y = self.height - bottom_border;
-        let src_start_y = fh - bottom_border;
-        for y in 0..bottom_border {
-            let src = (src_start_y + y) * fw * 3;
-            let dst = (start_y + y) * self.width * 3;
-            let len = (fw * 3).min(self.width * 3);
-            if dst + len <= self.pixels.len() && src + len <= frame.len() {
-                self.pixels[dst..dst + len].copy_from_slice(&frame[src..src + len]);
-            }
-        }
-    }
-
-    fn to_image(&self) -> ImageBuffer<Rgb<u8>, Vec<u8>> {
-        ImageBuffer::<Rgb<u8>, Vec<u8>>::from_raw(
-            self.width as u32,
-            self.height as u32,
-            self.pixels.clone(),
-        )
-        .unwrap()
     }
 }
 
-// ── Main pipeline ────────────────────────────────────────────────────
+pub fn stitch_to_image(
+    video: &Path,
+    debug: bool,
+    config: &crate::config::Config,
+) -> Result<image::RgbImage> {
+    let (width, height) = get_video_dimensions(video)?;
+    let mut reader = FrameReader::open(video, width, height, config.longshot.fps)?;
+    let mut samples = BorderSamples::new();
+    while let Some(rgb) = reader.next_frame()? {
+        samples.push(grayscale(&rgb));
+    }
+    let planes: Vec<&[u8]> = samples.frames.iter().map(Vec::as_slice).collect();
+    let borders = detect_static_borders(&planes, width, height);
+    drop(samples);
+    drop(reader);
+
+    let mut stitcher = Stitcher::new(width, height, borders, config, debug)?;
+    let mut reader = FrameReader::open(video, width, height, config.longshot.fps)?;
+    while let Some(rgb) = reader.next_frame()? {
+        let outcome = stitcher.push_frame(rgb)?;
+        if debug && outcome == StitchUpdate::NoMatch {
+            eprintln!("Longshot: frame has no trusted match");
+        }
+    }
+    stitcher.finish()
+}
 
 pub fn stitch_video(
-    video_path: &Path,
-    output_path: &Path,
-    w_logical: i32,
-    h_logical: i32,
-    scale: f64,
+    video: &Path,
+    output: &Path,
     debug: bool,
     config: &crate::config::Config,
 ) -> Result<()> {
-    let sad_threshold = config.longshot.sad_threshold;
-    let max_skip = config.longshot.max_skip;
-    let target_overlap = config.longshot.target_overlap;
-    let analysis_fps = config.longshot.fps.max(1).to_string();
-
-    let (w_phys, h_phys) = get_video_dimensions(video_path).unwrap_or_else(|e| {
-        if debug {
-            eprintln!("ffprobe fallback: {}", e);
-        }
-        (
-            (w_logical as f64 * scale).round() as usize,
-            (h_logical as f64 * scale).round() as usize,
-        )
-    });
-
-    if debug {
-        eprintln!(
-            "Stitcher: {}x{} COL_GROUPS={} sad_threshold={:.1} max_skip={} overlap={:.2}",
-            w_phys, h_phys, COL_GROUPS, sad_threshold, max_skip, target_overlap
-        );
-    }
-
-    // Use YUV444p — Y plane is grayscale, skip RGB→gray conversion.
-    let mut ffmpeg = Command::new("ffmpeg")
-        .arg("-i")
-        .arg(video_path)
-        .arg("-vf")
-        .arg(format!("fps={analysis_fps}"))
-        .arg("-f")
-        .arg("rawvideo")
-        .arg("-pix_fmt")
-        .arg("yuv444p")
-        .arg("-")
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-        .context("ffmpeg spawn failed")?;
-
-    let mut stdout = ffmpeg.stdout.take().context("no ffmpeg stdout")?;
-
-    let frame_total_bytes = w_phys * h_phys * 3;
-    let y_plane_bytes = w_phys * h_phys;
-
-    struct FrameData {
-        cols: Vec<f32>,
-        yuv: Vec<u8>,
-    }
-
-    let mut frames: Vec<FrameData> = Vec::new();
-    let mut buf = vec![0u8; frame_total_bytes];
-
-    loop {
-        match stdout.read_exact(&mut buf) {
-            Ok(()) => {}
-            Err(ref e) if e.kind() == io::ErrorKind::UnexpectedEof => break,
-            Err(err) => return Err(err).context("reading ffmpeg"),
-        }
-
-        frames.push(FrameData {
-            cols: Vec::new(),
-            yuv: buf.clone(),
-        });
-    }
-    let _ = ffmpeg.wait();
-    if frames.is_empty() {
-        anyhow::bail!("No frames read");
-    }
-    if debug {
-        eprintln!("Read {} frames", frames.len());
-    }
-
-    // ── Auto-Detect Static Borders ──
-    let sample_indices: Vec<usize> = if frames.len() <= 5 {
-        (0..frames.len()).collect()
-    } else {
-        let step = frames.len() / 5;
-        (0..5).map(|k| (k * step).min(frames.len() - 1)).collect()
-    };
-    let sampled_y_planes: Vec<&[u8]> = sample_indices
-        .iter()
-        .map(|&idx| &frames[idx].yuv[..y_plane_bytes])
-        .collect();
-    let (top_border, bottom_border) = detect_static_borders(&sampled_y_planes, w_phys, h_phys);
-    if debug {
-        eprintln!(
-            "Auto-Masking: detected top_border={}px, bottom_border={}px",
-            top_border, bottom_border
-        );
-    }
-
-    let active_h = h_phys.saturating_sub(top_border + bottom_border);
-    if active_h == 0 {
-        anyhow::bail!("Active height is 0 after border detection");
-    }
-
-    for frame in &mut frames {
-        frame.cols = column_sample(
-            &frame.yuv[..y_plane_bytes],
-            w_phys,
-            h_phys,
-            top_border,
-            bottom_border,
-        );
-    }
-
-    // ── Match & stitch ──
-    let min_overlap = (active_h as f32 * MIN_OVERLAP_FRAC).max(20.0) as usize;
-
-    let mut canvas = Canvas2D::new(w_phys, active_h);
-    let rgb_0 = yuv_to_rgb(&frames[0].yuv, w_phys, h_phys);
-    canvas.place_frame_cropped(FramePlacement {
-        frame: &rgb_0,
-        frame_w: w_phys,
-        frame_h: h_phys,
-        top_border,
-        bottom_border,
-        gx: 0,
-        gy: 0,
-    });
-
-    let mut history: Vec<(usize, i32, f32)> = Vec::new();
-
-    let mut last_placed: usize = 0;
-    let mut last_gx: i32 = 0;
-    let mut last_gy: i32 = 0;
-
-    let mut i = 1usize;
-    while i < frames.len() {
-        let (offset, sad) = match_columns(MatchInput {
-            previous: FrameSample {
-                cols: &frames[last_placed].cols,
-                y: &frames[last_placed].yuv[..y_plane_bytes],
-            },
-            current: FrameSample {
-                cols: &frames[i].cols,
-                y: &frames[i].yuv[..y_plane_bytes],
-            },
-            w: w_phys,
-            active_h,
-            top_border,
-            predict: history.last().map(|h| h.1).unwrap_or(0),
-            min_overlap,
-            sad_threshold,
-            debug,
-        });
-
-        let is_good = sad < sad_threshold * RELIABLE_MULTIPLIER;
-        let is_static = offset.abs() < 3 && sad < sad_threshold * 0.3;
-
-        if debug {
-            eprintln!(
-                "  match {}->{}: offset={}, sad={:.2}, good={}, static={}",
-                last_placed, i, offset, sad, is_good, is_static
-            );
-        }
-
-        if is_good && !is_static {
-            let dy = offset;
-            let new_gx = last_gx;
-            let new_gy = last_gy + dy;
-
-            canvas.grow_to_fit(new_gx, new_gy, w_phys, active_h);
-            let rgb_i = yuv_to_rgb(&frames[i].yuv, w_phys, h_phys);
-            canvas.place_frame_cropped(FramePlacement {
-                frame: &rgb_i,
-                frame_w: w_phys,
-                frame_h: h_phys,
-                top_border,
-                bottom_border,
-                gx: new_gx,
-                gy: new_gy,
-            });
-
-            history.push((i, offset, sad));
-            last_placed = i;
-            last_gx = new_gx;
-            last_gy = new_gy;
-
-            let (skip, _pred) = calc_skip_and_predict(&history, active_h, max_skip, target_overlap);
-            if debug {
-                eprintln!("    placed, skip={}, next={}", skip, i + skip);
-            }
-            i += skip;
-        } else if is_static {
-            if debug {
-                eprintln!("    static frame, skipping");
-            }
-            i += 1;
-        } else {
-            if debug {
-                eprintln!("    bad match (sad={:.2}), trying next frame", sad);
-            }
-            i += 1;
-        }
-    }
-
-    if top_border > 0 {
-        canvas.grow_to_fit(0, -(top_border as i32), w_phys, top_border);
-        canvas.overlay_header(&rgb_0, w_phys, top_border);
-    }
-    if bottom_border > 0 {
-        let last_rgb = yuv_to_rgb(&frames[last_placed].yuv, w_phys, h_phys);
-        canvas.grow_to_fit(0, canvas.height as i32, w_phys, bottom_border);
-        canvas.overlay_footer(&last_rgb, w_phys, h_phys, bottom_border);
-    }
-
-    let img = canvas.to_image();
-    if debug {
-        eprintln!(
-            "Canvas: {}x{}, placed {}/{} frames",
-            img.width(),
-            img.height(),
-            history.len() + 1,
-            frames.len()
-        );
-    }
-    img.save(output_path).context("Failed to save")?;
-
+    let image = stitch_to_image(video, debug, config)?;
+    let parent = output
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    let mut temp = tempfile::NamedTempFile::new_in(parent)?;
+    image.write_to(&mut temp, image::ImageFormat::Png)?;
+    temp.persist_noclobber(output)
+        .context("Cannot publish long screenshot; output must not already exist")?;
     Ok(())
-}
-
-/// YUV444p (BT.601 limited range) → RGB conversion.
-fn yuv_to_rgb(yuv: &[u8], w: usize, h: usize) -> Vec<u8> {
-    let plane_size = w * h;
-    let y_plane = &yuv[..plane_size];
-    let u_plane = &yuv[plane_size..2 * plane_size];
-    let v_plane = &yuv[2 * plane_size..];
-
-    let mut rgb = vec![0u8; plane_size * 3];
-    rgb.par_chunks_exact_mut(3)
-        .enumerate()
-        .for_each(|(i, pixel)| {
-            let y = y_plane[i] as f32;
-            let u = u_plane[i] as f32 - 128.0;
-            let v = v_plane[i] as f32 - 128.0;
-
-            let r = (y + 1.402 * v).round().clamp(0.0, 255.0) as u8;
-            let g = (y - 0.344136 * u - 0.714136 * v).round().clamp(0.0, 255.0) as u8;
-            let b = (y + 1.772 * u).round().clamp(0.0, 255.0) as u8;
-
-            pixel[0] = r;
-            pixel[1] = g;
-            pixel[2] = b;
-        });
-    rgb
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::process::Stdio;
 
     #[test]
     fn test_col_sample() {
@@ -859,42 +742,95 @@ mod tests {
     }
 
     #[test]
-    fn test_yuv_to_rgb_black() {
-        let w = 2;
-        let h = 2;
-        let plane_size = w * h;
-        let mut yuv = vec![0u8; plane_size * 3];
-        yuv[..plane_size].fill(16);
-        yuv[plane_size..2 * plane_size].fill(128);
-        yuv[2 * plane_size..].fill(128);
-
-        let rgb = yuv_to_rgb(&yuv, w, h);
-        for i in 0..4 {
-            assert!(rgb[i * 3] < 20, "R should be near 0, got {}", rgb[i * 3]);
-            assert!(rgb[i * 3 + 1] < 20, "G should be near 0");
-            assert!(rgb[i * 3 + 2] < 20, "B should be near 0");
+    fn static_frame_history_stays_bounded() {
+        let config = crate::config::Config::default();
+        let mut stitcher = Stitcher::new(16, 60, (0, 0), &config, false).unwrap();
+        let frame = vec![100; 16 * 60 * 3];
+        for _ in 0..300 {
+            stitcher.push_frame(frame.clone()).unwrap();
         }
+        assert_eq!(stitcher.history.len(), 0);
+        assert_eq!(stitcher.finish().unwrap().dimensions(), (16, 60));
     }
 
     #[test]
-    fn test_weread_video() {
-        let config = crate::config::Config::default();
-        let video = Path::new("/home/nana/Downloads/weread.MP4");
-        if !video.exists() {
-            eprintln!("Skipping: video file not found");
-            return;
+    fn reservoir_never_retains_all_frames() {
+        let mut samples = BorderSamples::new();
+        for value in 0..10_000 {
+            samples.push(vec![(value % 255) as u8; 8]);
         }
-        let res = stitch_video(
-            video,
-            Path::new("/tmp/weread_sad_output.png"),
-            1334,
-            1920,
-            1.0,
-            true,
-            &config,
-        );
-        if let Err(e) = res {
-            eprintln!("Stitch failed: {}", e);
+        assert_eq!(samples.frames.len(), 5);
+        assert_eq!(samples.frames[0], vec![0; 8]);
+    }
+
+    #[test]
+    fn incremental_stitching_restores_header_and_footer_once() {
+        let mut config = crate::config::Config::default();
+        config.longshot.max_skip = 1;
+        let mut stitcher = Stitcher::new(24, 80, (5, 5), &config, false).unwrap();
+        for offset in [0, 10, 20, 10, 30] {
+            let frame = synthetic_frame(24, 80, offset, 5);
+            stitcher.push_frame(frame).unwrap();
         }
+        let result = stitcher.finish().unwrap();
+        assert_eq!(result.dimensions(), (24, 110));
+        assert_eq!(result.get_pixel(0, 0).0, [255, 20, 30]);
+        assert_eq!(result.get_pixel(0, 109).0, [10, 20, 255]);
+    }
+
+    fn synthetic_frame(width: usize, height: usize, offset: usize, border: usize) -> Vec<u8> {
+        let mut rgb = Vec::with_capacity(width * height * 3);
+        for row in 0..height {
+            for col in 0..width {
+                let pixel = if row < border {
+                    [255, 20, 30]
+                } else if row >= height - border {
+                    [10, 20, 255]
+                } else {
+                    let value =
+                        ((row + offset) * 73 + col * 31 + (row + offset) * (row + offset) * 17)
+                            as u8;
+                    [value, value, value]
+                };
+                rgb.extend_from_slice(&pixel);
+            }
+        }
+        rgb
+    }
+
+    #[test]
+    #[ignore = "requires ffmpeg and ffprobe; run explicitly for integration verification"]
+    fn synthetic_video_pipeline_preserves_dimensions_and_colors() {
+        use std::io::Write;
+        let directory = tempfile::tempdir().unwrap();
+        let video = directory.path().join("scroll.mkv");
+        let mut encoder = Command::new("ffmpeg")
+            .args([
+                "-v", "error", "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", "24x80", "-r", "6",
+                "-i", "-", "-c:v", "ffv1",
+            ])
+            .arg(&video)
+            .stdin(Stdio::piped())
+            .spawn()
+            .unwrap();
+        {
+            let mut stdin = encoder.stdin.take().unwrap();
+            for offset in [0, 10, 20, 30, 40, 50] {
+                stdin
+                    .write_all(&synthetic_frame(24, 80, offset, 5))
+                    .unwrap();
+            }
+        }
+        assert!(encoder.wait().unwrap().success());
+        let mut config = crate::config::Config::default();
+        config.longshot.fps = 6;
+        config.longshot.max_skip = 1;
+        let output = directory.path().join("result.png");
+        stitch_video(&video, &output, false, &config).unwrap();
+        let image = image::open(&output).unwrap().into_rgb8();
+        assert_eq!(image.dimensions(), (24, 130));
+        assert_eq!(image.get_pixel(0, 0).0, [255, 20, 30]);
+        assert_eq!(image.get_pixel(0, 129).0, [10, 20, 255]);
+        assert!(stitch_video(&video, &output, false, &config).is_err());
     }
 }

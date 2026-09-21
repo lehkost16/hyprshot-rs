@@ -12,7 +12,7 @@ is 4331db8; d91f0e6 preserves the experimental restructuring for comparison.
 
 - [x] 1. Shared logical geometry and image document contract; monitor scaling,
   rotation, negative origins and cross-output recording validation.
-- [ ] 2. Bounded longshot decoding and incremental stitching; explicit canvas
+- [x] 2. Bounded longshot decoding and incremental stitching; explicit canvas
   limits, decoder failure handling and reproducible synthetic-video tests.
 - [ ] 3. Recording session ownership; concurrent-toggle locking, process identity,
   finalizing/failure states and recoverable output handling.

@@ -16,6 +16,8 @@ Hyshot is one application with an internal editor library, not two executables.
   prevents processing an unfinished video.
 - `src/record/`: video-specific arguments and finalization.
 - `src/longshot/`: scrolling-capture orchestration, matching and stitching.
+- `crates/core`: logical rectangles and immutable original-pixel documents shared
+  by capture and editing; no UI or compositor dependencies.
 - `src/config.rs`: one configuration owner, including `[editor]`; writes use
   same-directory temporary files and atomic replacement.
 
@@ -45,6 +47,18 @@ The Wayland app ID remains `site.nullable.annotator` to retain compositor rules;
 this does not introduce a separate executable or configuration dependency.
 
 ## Validation
+
+Longshot uses two decoder passes: a five-frame luminance reservoir for fixed
+header/footer detection, followed by incremental matching. It retains a reference
+frame rather than the whole video. Input RGB frames are limited to 64 MiB and the
+RGB canvas to 128 MiB; these are data limits, not a whole-process RSS guarantee.
+Reallocation and decoder buffers still contribute to peak memory. Export consumes
+the canvas without duplicating it. Decode errors, truncated frames and canvas
+overflow are explicit errors; the source recording is retained for recovery.
+
+`stitch` gets actual pixel dimensions from ffprobe. The old width/height/scale
+overrides are removed rather than used to guess dimensions after probe failure.
+Published longshot files must not already exist.
 
 ```sh
 cargo fmt --all --check

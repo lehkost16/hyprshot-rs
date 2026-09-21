@@ -103,19 +103,10 @@ pub fn run(mut args: Args) -> Result<()> {
         Subcommands::Annotate => workflow::screenshot(ScreenshotAction::Annotate, &args, &config),
         Subcommands::Ocr => workflow::screenshot(ScreenshotAction::Ocr, &args, &config),
         Subcommands::Longshot => longshot::handle_longshot(&args, &config),
-        Subcommands::Stitch {
-            input,
-            output,
-            width,
-            height,
-            scale,
-        } => longshot::handle_stitch(
+        Subcommands::Stitch { input, output } => longshot::handle_stitch(
             longshot::StitchRequest {
                 input: input.clone(),
                 output: output.clone(),
-                width,
-                height,
-                scale,
                 debug: args.debug,
                 silent,
                 notif_timeout,

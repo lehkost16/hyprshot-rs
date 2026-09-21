@@ -114,17 +114,6 @@ pub enum Subcommands {
             help = "Output PNG path (default: input path with .png extension)"
         )]
         output: Option<PathBuf>,
-        #[arg(short = 'W', long, help = "Logical width of the capture region")]
-        width: Option<i32>,
-        #[arg(short = 'H', long, help = "Logical height of the capture region")]
-        height: Option<i32>,
-        #[arg(
-            short = 'S',
-            long,
-            default_value = "1.0",
-            help = "Display scale factor"
-        )]
-        scale: f64,
     },
     #[command(about = "Record a selected screen region to video (toggle start/stop)")]
     Record,

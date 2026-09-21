@@ -82,7 +82,7 @@ fn geometry_slurp_rect_roundtrip_preserves_values() {
         width: 56,
         height: 78,
     };
-    let parsed = match crate::geometry::Geometry::from_slurp_rect(&rect) {
+    let parsed = match crate::geometry::from_slurp_rect(&rect) {
         Ok(v) => v,
         Err(err) => panic!("Failed to parse slurp rect: {}", err),
     };

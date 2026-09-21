@@ -1798,6 +1798,7 @@ dependencies = [
  "dirs",
  "env_logger",
  "grim-rs",
+ "hyshot-core",
  "hyshot-editor",
  "image",
  "memmap2",
@@ -1814,6 +1815,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "hyshot-core"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "image",
+ "tempfile",
+]
+
+[[package]]
 name = "hyshot-editor"
 version = "0.1.0"
 dependencies = [
@@ -1822,6 +1832,7 @@ dependencies = [
  "egui",
  "egui-wgpu",
  "egui_extras",
+ "hyshot-core",
  "image",
  "imageproc",
  "indexmap",

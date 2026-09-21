@@ -5,6 +5,7 @@ edition = "2024"
 license = "GPL-3.0"
 
 [dependencies]
+hyshot-core = { path = "../core" }
 serde = { version = "1.0", features = ["derive"] }
 sctk = { package = "smithay-client-toolkit", version = "0.21.1", default-features = false, features = [
     "calloop",

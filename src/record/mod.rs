@@ -163,15 +163,7 @@ pub fn handle_record(args: &Args, config: &config::Config) -> Result<()> {
 
         // Query the monitor containing the selected region, so the overlay border
         // is drawn in the same output coordinate space as the recording.
-        let monitor_info = crate::compositor::get_monitor_info_for_geometry(&geometry, debug)
-            .unwrap_or_else(|_| crate::compositor::MonitorInfo {
-                name: "eDP-1".to_string(),
-                scale: 1.0,
-                x: 0,
-                y: 0,
-                width: i32::MAX,
-                height: i32::MAX,
-            });
+        let monitor_info = crate::compositor::get_monitor_info_for_geometry(&geometry, debug)?;
         let scale = monitor_info.scale;
 
         let filename = format!(

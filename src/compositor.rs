@@ -1,10 +1,10 @@
-use anyhow::Result;
+//! Compositor metadata is converted to logical geometry at this boundary.
+use anyhow::{Context, Result, ensure};
 use serde_json::Value;
 use std::process::Command;
 use std::time::Duration;
 
 use crate::geometry::Geometry;
-use crate::utils::output_with_timeout;
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct MonitorInfo {
@@ -16,126 +16,43 @@ pub(crate) struct MonitorInfo {
     pub height: i32,
 }
 
-pub fn get_active_monitor_info(_debug: bool) -> Result<(String, f64, i32, i32)> {
-    const IPC_TIMEOUT: Duration = Duration::from_secs(3);
-    // Try Hyprland first
-    if let Ok(output) = output_with_timeout(
-        {
-            let mut cmd = Command::new("hyprctl");
-            cmd.arg("activeworkspace").arg("-j");
-            cmd
-        },
-        IPC_TIMEOUT,
-    ) && let Ok(active_workspace) = serde_json::from_slice::<Value>(&output.stdout)
-        && let Ok(output_mon) = output_with_timeout(
-            {
-                let mut cmd = Command::new("hyprctl");
-                cmd.arg("monitors").arg("-j");
-                cmd
-            },
-            IPC_TIMEOUT,
-        )
-        && let Ok(monitors) = serde_json::from_slice::<Value>(&output_mon.stdout)
-        && let Some(arr) = monitors.as_array()
-        && let Some(m) = arr
-            .iter()
-            .find(|m| m["activeWorkspace"]["id"] == active_workspace["id"])
-    {
-        let name = m["name"].as_str().unwrap_or("").to_string();
-        let scale = m["scale"].as_f64().unwrap_or(1.0);
-        let x = m["x"].as_i64().unwrap_or(0) as i32;
-        let y = m["y"].as_i64().unwrap_or(0) as i32;
-        return Ok((name, scale, x, y));
+impl MonitorInfo {
+    pub fn geometry(&self) -> Result<Geometry> {
+        Geometry::new(self.x, self.y, self.width, self.height)
     }
-
-    // Try Sway
-    if let Ok(output) = output_with_timeout(
-        {
-            let mut cmd = Command::new("swaymsg");
-            cmd.arg("-t").arg("get_workspaces");
-            cmd
-        },
-        IPC_TIMEOUT,
-    ) && let Ok(workspaces) = serde_json::from_slice::<Value>(&output.stdout)
-        && let Some(arr) = workspaces.as_array()
-        && let Some(w) = arr.iter().find(|w| w["focused"].as_bool() == Some(true))
-        && let Some(focused_output) = w["output"].as_str()
-        && let Ok(output_mon) = output_with_timeout(
-            {
-                let mut cmd = Command::new("swaymsg");
-                cmd.arg("-t").arg("get_outputs");
-                cmd
-            },
-            IPC_TIMEOUT,
-        )
-        && let Ok(outputs) = serde_json::from_slice::<Value>(&output_mon.stdout)
-        && let Some(arr_mon) = outputs.as_array()
-        && let Some(o) = arr_mon
-            .iter()
-            .find(|o| o["name"].as_str() == Some(focused_output))
-    {
-        let name = o["name"].as_str().unwrap_or("").to_string();
-        let scale = o["scale"].as_f64().unwrap_or(1.0);
-        let rect = &o["rect"];
-        let x = rect["x"].as_i64().unwrap_or(0) as i32;
-        let y = rect["y"].as_i64().unwrap_or(0) as i32;
-        return Ok((name, scale, x, y));
-    }
-
-    Ok(("eDP-1".to_string(), 1.0, 0, 0))
 }
 
 pub(crate) fn get_monitor_info_for_geometry(
     geometry: &Geometry,
     debug: bool,
 ) -> Result<MonitorInfo> {
-    const IPC_TIMEOUT: Duration = Duration::from_secs(3);
-
-    if let Ok(output) = output_with_timeout(
-        {
-            let mut cmd = Command::new("hyprctl");
-            cmd.arg("monitors").arg("-j");
-            cmd
-        },
-        IPC_TIMEOUT,
-    ) && let Ok(monitors) = serde_json::from_slice::<Value>(&output.stdout)
-        && let Some(monitor) = monitors
-            .as_array()
-            .and_then(|arr| find_monitor_for_geometry(arr, geometry, monitor_info_from_hypr))
-    {
-        if debug {
-            eprintln!("Selected output for region: {:?}", monitor);
-        }
-        return Ok(monitor);
+    let (mut command, parse): (_, fn(&Value) -> Option<MonitorInfo>) =
+        if std::env::var_os("HYPRLAND_INSTANCE_SIGNATURE").is_some() {
+            let mut command = Command::new("hyprctl");
+            command.args(["monitors", "-j"]);
+            (command, monitor_info_from_hypr)
+        } else if std::env::var_os("SWAYSOCK").is_some() {
+            let mut command = Command::new("swaymsg");
+            command.args(["-t", "get_outputs", "-r"]);
+            (command, monitor_info_from_sway)
+        } else {
+            anyhow::bail!("Cannot identify compositor; no output will be guessed for recording");
+        };
+    command.stdin(std::process::Stdio::null());
+    let output = crate::utils::output_with_timeout(command, Duration::from_secs(3))?;
+    ensure!(
+        output.status.success(),
+        "Monitor query failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let values: Vec<Value> =
+        serde_json::from_slice(&output.stdout).context("Invalid monitor metadata")?;
+    let monitor = find_monitor_for_geometry(&values, geometry, parse)
+        .context("Selected region must fit entirely within one enabled output; cross-output recording is not supported")?;
+    if debug {
+        eprintln!("Selected output: {monitor:?}");
     }
-
-    if let Ok(output) = output_with_timeout(
-        {
-            let mut cmd = Command::new("swaymsg");
-            cmd.arg("-t").arg("get_outputs");
-            cmd
-        },
-        IPC_TIMEOUT,
-    ) && let Ok(outputs) = serde_json::from_slice::<Value>(&output.stdout)
-        && let Some(monitor) = outputs
-            .as_array()
-            .and_then(|arr| find_monitor_for_geometry(arr, geometry, monitor_info_from_sway))
-    {
-        if debug {
-            eprintln!("Selected output for region: {:?}", monitor);
-        }
-        return Ok(monitor);
-    }
-
-    let (name, scale, x, y) = get_active_monitor_info(debug)?;
-    Ok(MonitorInfo {
-        name,
-        scale,
-        x,
-        y,
-        width: i32::MAX,
-        height: i32::MAX,
-    })
+    Ok(monitor)
 }
 
 fn find_monitor_for_geometry(
@@ -143,43 +60,67 @@ fn find_monitor_for_geometry(
     geometry: &Geometry,
     parse: fn(&Value) -> Option<MonitorInfo>,
 ) -> Option<MonitorInfo> {
-    let center_x = geometry.x + geometry.width / 2;
-    let center_y = geometry.y + geometry.height / 2;
-
     outputs.iter().filter_map(parse).find(|monitor| {
-        center_x >= monitor.x
-            && center_x < monitor.x + monitor.width
-            && center_y >= monitor.y
-            && center_y < monitor.y + monitor.height
+        monitor
+            .geometry()
+            .is_ok_and(|bounds| bounds.contains(geometry))
     })
 }
 
-fn monitor_info_from_hypr(value: &Value) -> Option<MonitorInfo> {
-    let scale = value["scale"].as_f64().unwrap_or(1.0);
-    // Hyprland monitor dimensions are already logical compositor coordinates.
-    // Dividing them by scale would make the captured image unnecessarily small.
-    let width = value["width"].as_i64()? as i32;
-    let height = value["height"].as_i64()? as i32;
-    Some(MonitorInfo {
-        name: value["name"].as_str().unwrap_or("").to_string(),
+pub(crate) fn monitor_info_from_hypr(value: &Value) -> Option<MonitorInfo> {
+    if value["disabled"].as_bool() == Some(true) {
+        return None;
+    }
+    let scale = value["scale"].as_f64()?;
+    if !scale.is_finite() || scale <= 0.0 {
+        return None;
+    }
+    let mut width = value["width"].as_f64()?;
+    let mut height = value["height"].as_f64()?;
+    let transform = value["transform"].as_u64().unwrap_or(0);
+    if transform > 7 {
+        return None;
+    }
+    if transform % 2 == 1 {
+        std::mem::swap(&mut width, &mut height);
+    }
+    // hyprctl reports mode pixels, not m_size. Transform first, then scale.
+    let width = (width / scale).round();
+    let height = (height / scale).round();
+    if !(1.0..=i32::MAX as f64).contains(&width) || !(1.0..=i32::MAX as f64).contains(&height) {
+        return None;
+    }
+    let monitor = MonitorInfo {
+        name: value["name"].as_str()?.to_owned(),
         scale,
-        x: value["x"].as_i64().unwrap_or(0) as i32,
-        y: value["y"].as_i64().unwrap_or(0) as i32,
-        width,
-        height,
-    })
+        x: i32::try_from(value["x"].as_i64()?).ok()?,
+        y: i32::try_from(value["y"].as_i64()?).ok()?,
+        width: width as i32,
+        height: height as i32,
+    };
+    monitor.geometry().ok()?;
+    Some(monitor)
 }
 
 fn monitor_info_from_sway(value: &Value) -> Option<MonitorInfo> {
+    if value["active"].as_bool() == Some(false) {
+        return None;
+    }
     let rect = &value["rect"];
-    Some(MonitorInfo {
-        name: value["name"].as_str().unwrap_or("").to_string(),
-        scale: value["scale"].as_f64().unwrap_or(1.0),
-        x: rect["x"].as_i64().unwrap_or(0) as i32,
-        y: rect["y"].as_i64().unwrap_or(0) as i32,
-        width: rect["width"].as_i64()? as i32,
-        height: rect["height"].as_i64()? as i32,
-    })
+    let scale = value["scale"].as_f64()?;
+    if !scale.is_finite() || scale <= 0.0 {
+        return None;
+    }
+    let monitor = MonitorInfo {
+        name: value["name"].as_str()?.to_owned(),
+        scale,
+        x: i32::try_from(rect["x"].as_i64()?).ok()?,
+        y: i32::try_from(rect["y"].as_i64()?).ok()?,
+        width: i32::try_from(rect["width"].as_i64()?).ok()?,
+        height: i32::try_from(rect["height"].as_i64()?).ok()?,
+    };
+    monitor.geometry().ok()?;
+    Some(monitor)
 }
 
 #[cfg(test)]
@@ -187,50 +128,51 @@ mod tests {
     use super::*;
     use serde_json::json;
 
-    #[test]
-    fn finds_hypr_monitor_containing_selection_center() {
-        let outputs = vec![
-            json!({
-                "name": "eDP-1",
-                "x": 0,
-                "y": 0,
-                "width": 2560,
-                "height": 1600,
-                "scale": 2.0
-            }),
-            json!({
-                "name": "HDMI-A-1",
-                "x": 1280,
-                "y": 0,
-                "width": 1920,
-                "height": 1080,
-                "scale": 1.0
-            }),
-        ];
-        let geometry = Geometry::new(2600, 100, 300, 200).unwrap();
-
-        let monitor = find_monitor_for_geometry(&outputs, &geometry, monitor_info_from_hypr)
-            .expect("expected monitor containing region center");
-
-        assert_eq!(monitor.name, "HDMI-A-1");
-        assert_eq!(monitor.x, 1280);
-        assert_eq!(monitor.width, 1920);
+    fn monitors() -> Vec<Value> {
+        vec![
+            json!({"name":"eDP-1","x":0,"y":0,"width":2560,"height":1600,"scale":2.0}),
+            json!({"name":"HDMI-A-1","x":1280,"y":0,"width":1920,"height":1080,"scale":1.0}),
+        ]
     }
 
     #[test]
-    fn hypr_monitor_dimensions_are_logical() {
-        let output = json!({
-            "name": "eDP-1",
-            "x": 0,
-            "y": 0,
-            "width": 2560,
-            "height": 1600,
-            "scale": 2.0
-        });
+    fn scaled_primary_does_not_shadow_adjacent_output() {
+        let selected = Geometry::new(1400, 100, 300, 200).unwrap();
+        let monitor =
+            find_monitor_for_geometry(&monitors(), &selected, monitor_info_from_hypr).unwrap();
+        assert_eq!(monitor.name, "HDMI-A-1");
+        assert_eq!(monitor_info_from_hypr(&monitors()[0]).unwrap().width, 1280);
+    }
 
-        let monitor = monitor_info_from_hypr(&output).expect("expected monitor info");
+    #[test]
+    fn rotation_and_fractional_scale_are_applied_once() {
+        let output = json!({"name":"DP-1","x":-1440,"y":-200,"width":3840,"height":2160,"scale":1.5,"transform":1});
+        let monitor = monitor_info_from_hypr(&output).unwrap();
+        assert_eq!(
+            monitor.geometry().unwrap(),
+            Geometry::new(-1440, -200, 1440, 2560).unwrap()
+        );
+    }
 
-        assert_eq!(monitor.width, 2560);
-        assert_eq!(monitor.height, 1600);
+    #[test]
+    fn cross_output_and_invalid_scale_are_rejected() {
+        assert!(
+            find_monitor_for_geometry(
+                &monitors(),
+                &Geometry::new(1200, 0, 200, 100).unwrap(),
+                monitor_info_from_hypr
+            )
+            .is_none()
+        );
+        let mut monitor = monitors().remove(0);
+        monitor["scale"] = json!(0);
+        assert!(monitor_info_from_hypr(&monitor).is_none());
+    }
+
+    #[test]
+    fn sway_rect_is_already_logical() {
+        let output =
+            json!({"name":"DP-1","scale":2.0,"rect":{"x":0,"y":0,"width":1280,"height":800}});
+        assert_eq!(monitor_info_from_sway(&output).unwrap().width, 1280);
     }
 }

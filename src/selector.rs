@@ -85,7 +85,7 @@ pub fn select_from_boxes(boxes: &str, debug: bool) -> Result<Geometry> {
 }
 
 fn rect_to_geometry(rect: &slurp_rs::Rect) -> Result<Geometry> {
-    Geometry::from_slurp_rect(rect)
+    crate::geometry::from_slurp_rect(rect)
 }
 
 pub(crate) fn parse_choice_boxes(input: &str) -> Result<Vec<slurp_rs::ChoiceBox>> {

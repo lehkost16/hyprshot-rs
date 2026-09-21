@@ -1,243 +1,36 @@
 use anyhow::{Context, Result};
 use notify_rust::Notification;
-use serde_json::Value;
 use std::io::Write;
 use std::process::{Command, Stdio};
-use std::time::Duration;
 use tempfile::Builder;
 
-use crate::cli::Args;
-use crate::config::Config;
-use crate::freeze;
 use crate::geometry::Geometry;
-use crate::selector;
-use crate::utils::output_with_timeout;
 
-#[derive(Debug, Clone, PartialEq)]
-pub(crate) struct MonitorInfo {
-    pub name: String,
-    pub scale: f64,
-    pub x: i32,
-    pub y: i32,
-    pub width: i32,
-    pub height: i32,
+pub enum ExternalTool<'a> {
+    Annotate(&'a str),
+    Ocr(&'a str),
 }
 
-pub fn get_active_monitor_info(_debug: bool) -> Result<(String, f64, i32, i32)> {
-    const IPC_TIMEOUT: Duration = Duration::from_secs(3);
-    // Try Hyprland first
-    if let Ok(output) = output_with_timeout(
-        {
-            let mut cmd = Command::new("hyprctl");
-            cmd.arg("activeworkspace").arg("-j");
-            cmd
-        },
-        IPC_TIMEOUT,
-    ) && let Ok(active_workspace) = serde_json::from_slice::<Value>(&output.stdout)
-        && let Ok(output_mon) = output_with_timeout(
-            {
-                let mut cmd = Command::new("hyprctl");
-                cmd.arg("monitors").arg("-j");
-                cmd
-            },
-            IPC_TIMEOUT,
-        )
-        && let Ok(monitors) = serde_json::from_slice::<Value>(&output_mon.stdout)
-        && let Some(arr) = monitors.as_array()
-        && let Some(m) = arr
-            .iter()
-            .find(|m| m["activeWorkspace"]["id"] == active_workspace["id"])
-    {
-        let name = m["name"].as_str().unwrap_or("").to_string();
-        let scale = m["scale"].as_f64().unwrap_or(1.0);
-        let x = m["x"].as_i64().unwrap_or(0) as i32;
-        let y = m["y"].as_i64().unwrap_or(0) as i32;
-        return Ok((name, scale, x, y));
-    }
-
-    // Try Sway
-    if let Ok(output) = output_with_timeout(
-        {
-            let mut cmd = Command::new("swaymsg");
-            cmd.arg("-t").arg("get_workspaces");
-            cmd
-        },
-        IPC_TIMEOUT,
-    ) && let Ok(workspaces) = serde_json::from_slice::<Value>(&output.stdout)
-        && let Some(arr) = workspaces.as_array()
-        && let Some(w) = arr.iter().find(|w| w["focused"].as_bool() == Some(true))
-        && let Some(focused_output) = w["output"].as_str()
-        && let Ok(output_mon) = output_with_timeout(
-            {
-                let mut cmd = Command::new("swaymsg");
-                cmd.arg("-t").arg("get_outputs");
-                cmd
-            },
-            IPC_TIMEOUT,
-        )
-        && let Ok(outputs) = serde_json::from_slice::<Value>(&output_mon.stdout)
-        && let Some(arr_mon) = outputs.as_array()
-        && let Some(o) = arr_mon
-            .iter()
-            .find(|o| o["name"].as_str() == Some(focused_output))
-    {
-        let name = o["name"].as_str().unwrap_or("").to_string();
-        let scale = o["scale"].as_f64().unwrap_or(1.0);
-        let rect = &o["rect"];
-        let x = rect["x"].as_i64().unwrap_or(0) as i32;
-        let y = rect["y"].as_i64().unwrap_or(0) as i32;
-        return Ok((name, scale, x, y));
-    }
-
-    Ok(("eDP-1".to_string(), 1.0, 0, 0))
+pub struct ExternalOptions {
+    pub debug: bool,
+    pub silent: bool,
+    pub notification_timeout: u32,
 }
 
-pub(crate) fn get_monitor_info_for_geometry(
-    geometry: &Geometry,
-    debug: bool,
-) -> Result<MonitorInfo> {
-    const IPC_TIMEOUT: Duration = Duration::from_secs(3);
-
-    if let Ok(output) = output_with_timeout(
-        {
-            let mut cmd = Command::new("hyprctl");
-            cmd.arg("monitors").arg("-j");
-            cmd
-        },
-        IPC_TIMEOUT,
-    ) && let Ok(monitors) = serde_json::from_slice::<Value>(&output.stdout)
-        && let Some(monitor) = monitors
-            .as_array()
-            .and_then(|arr| find_monitor_for_geometry(arr, geometry, monitor_info_from_hypr))
-    {
-        if debug {
-            eprintln!("Selected output for region: {:?}", monitor);
-        }
-        return Ok(monitor);
-    }
-
-    if let Ok(output) = output_with_timeout(
-        {
-            let mut cmd = Command::new("swaymsg");
-            cmd.arg("-t").arg("get_outputs");
-            cmd
-        },
-        IPC_TIMEOUT,
-    ) && let Ok(outputs) = serde_json::from_slice::<Value>(&output.stdout)
-        && let Some(monitor) = outputs
-            .as_array()
-            .and_then(|arr| find_monitor_for_geometry(arr, geometry, monitor_info_from_sway))
-    {
-        if debug {
-            eprintln!("Selected output for region: {:?}", monitor);
-        }
-        return Ok(monitor);
-    }
-
-    let (name, scale, x, y) = get_active_monitor_info(debug)?;
-    Ok(MonitorInfo {
-        name,
-        scale,
-        x,
-        y,
-        width: i32::MAX,
-        height: i32::MAX,
-    })
-}
-
-fn find_monitor_for_geometry(
-    outputs: &[Value],
-    geometry: &Geometry,
-    parse: fn(&Value) -> Option<MonitorInfo>,
-) -> Option<MonitorInfo> {
-    let center_x = geometry.x + geometry.width / 2;
-    let center_y = geometry.y + geometry.height / 2;
-
-    outputs.iter().filter_map(parse).find(|monitor| {
-        center_x >= monitor.x
-            && center_x < monitor.x + monitor.width
-            && center_y >= monitor.y
-            && center_y < monitor.y + monitor.height
-    })
-}
-
-fn monitor_info_from_hypr(value: &Value) -> Option<MonitorInfo> {
-    let scale = value["scale"].as_f64().unwrap_or(1.0);
-    // Hyprland monitor dimensions are already logical compositor coordinates.
-    // Dividing them by scale would make the captured image unnecessarily small.
-    let width = value["width"].as_i64()? as i32;
-    let height = value["height"].as_i64()? as i32;
-    Some(MonitorInfo {
-        name: value["name"].as_str().unwrap_or("").to_string(),
-        scale,
-        x: value["x"].as_i64().unwrap_or(0) as i32,
-        y: value["y"].as_i64().unwrap_or(0) as i32,
-        width,
-        height,
-    })
-}
-
-fn monitor_info_from_sway(value: &Value) -> Option<MonitorInfo> {
-    let rect = &value["rect"];
-    Some(MonitorInfo {
-        name: value["name"].as_str().unwrap_or("").to_string(),
-        scale: value["scale"].as_f64().unwrap_or(1.0),
-        x: rect["x"].as_i64().unwrap_or(0) as i32,
-        y: rect["y"].as_i64().unwrap_or(0) as i32,
-        width: rect["width"].as_i64()? as i32,
-        height: rect["height"].as_i64()? as i32,
-    })
-}
-
-pub fn run_external_screenshot_tool(args: &Args, config: &Config, is_ocr: bool) -> Result<()> {
-    let debug = args.debug;
-    let silent = args.silent;
-    let notif_timeout = args
-        .notif_timeout
-        .unwrap_or(config.capture.notification_timeout);
-
-    // 1. Start freeze overlay if requested
-    let freeze = args.freeze || config.advanced.freeze_on_external;
-
-    let freeze_guard = if freeze {
-        let guard = freeze::start_freeze(None, debug)?;
-        Some(guard)
-    } else {
-        None
+/// The process adapter owns temporary files, never selection or screen capture.
+pub fn run(
+    tool: ExternalTool<'_>,
+    image_bytes: &[u8],
+    geometry: Geometry,
+    options: ExternalOptions,
+) -> Result<()> {
+    let (template, is_ocr) = match tool {
+        ExternalTool::Annotate(command) => (command, false),
+        ExternalTool::Ocr(command) => (command, true),
     };
-
-    // 2. Select region
-    let geometry = match selector::select_region(debug) {
-        Ok(geom) => geom,
-        Err(err) => {
-            if let Some(guard) = freeze_guard {
-                let _ = guard.stop();
-            }
-            return Err(err);
-        }
-    };
-
-    let monitor_info = get_monitor_info_for_geometry(&geometry, debug).unwrap_or_else(|_| {
-        let (name, scale, x, y) =
-            get_active_monitor_info(debug).unwrap_or(("".to_string(), 1.0, 0, 0));
-        MonitorInfo {
-            name,
-            scale,
-            x,
-            y,
-            width: i32::MAX,
-            height: i32::MAX,
-        }
-    });
-
-    // 3. Capture region using grim CLI to PNG bytes
-    let image_bytes = crate::utils::capture_region_with_grim_cli(&geometry)?;
-
-    // Stop freeze overlay
-    if let Some(guard) = freeze_guard {
-        guard.stop()?;
-    }
-
+    let debug = options.debug;
+    let silent = options.silent;
+    let notif_timeout = options.notification_timeout;
     // 4. Save PNG to a unique temp file in /tmp/
     let mut temp_file = Builder::new()
         .prefix("shot_temp_")
@@ -246,22 +39,15 @@ pub fn run_external_screenshot_tool(args: &Args, config: &Config, is_ocr: bool) 
         .context("Failed to create temporary file for screenshot")?;
 
     temp_file
-        .write_all(&image_bytes)
+        .write_all(image_bytes)
         .context("Failed to write screenshot bytes to temporary file")?;
     let temp_path = temp_file.path().to_path_buf();
-    if !is_ocr && config.annotate.command.trim() == "builtin" {
-        return annotator::open_images(vec![temp_path.into_os_string()]);
-    }
     let temp_path_str = temp_path.to_string_lossy().to_string();
 
     // 5. Build external command by replacing placeholders
-    let cmd_template = if is_ocr {
-        &config.ocr.command
-    } else {
-        &config.annotate.command
-    };
+    let cmd_template = template;
 
-    let mut cmd_str = cmd_template.clone();
+    let mut cmd_str = cmd_template.to_owned();
     if cmd_str.contains("{}") {
         cmd_str = cmd_str.replace("{}", &temp_path_str);
     } else if cmd_str.contains("{path}") {
@@ -271,13 +57,24 @@ pub fn run_external_screenshot_tool(args: &Args, config: &Config, is_ocr: bool) 
         cmd_str = format!("{} {}", cmd_str, temp_path_str);
     }
 
+    // Query the compositor only for commands that actually need output metadata.
+    let monitor_info = if cmd_str.contains("{scale}") || cmd_str.contains("{monitor}") {
+        Some(crate::compositor::get_monitor_info_for_geometry(
+            &geometry, debug,
+        )?)
+    } else {
+        None
+    };
+
     // Replace other placeholders
     cmd_str = cmd_str.replace("{x}", &geometry.x.to_string());
     cmd_str = cmd_str.replace("{y}", &geometry.y.to_string());
     cmd_str = cmd_str.replace("{w}", &geometry.width.to_string());
     cmd_str = cmd_str.replace("{h}", &geometry.height.to_string());
-    cmd_str = cmd_str.replace("{scale}", &monitor_info.scale.to_string());
-    cmd_str = cmd_str.replace("{monitor}", &monitor_info.name);
+    if let Some(monitor) = monitor_info {
+        cmd_str = cmd_str.replace("{scale}", &monitor.scale.to_string());
+        cmd_str = cmd_str.replace("{monitor}", &monitor.name);
+    }
 
     if debug {
         eprintln!("Running command: {}", cmd_str);
@@ -296,6 +93,12 @@ pub fn run_external_screenshot_tool(args: &Args, config: &Config, is_ocr: bool) 
 
         let ocr_stdout = String::from_utf8_lossy(&output.stdout);
         let ocr_stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::ensure!(
+            output.status.success(),
+            "OCR command failed ({}): {}",
+            output.status,
+            ocr_stderr.trim()
+        );
         if debug {
             eprintln!("OCR stdout: {}", ocr_stdout);
             eprintln!("OCR stderr: {}", ocr_stderr);
@@ -310,13 +113,14 @@ pub fn run_external_screenshot_tool(args: &Args, config: &Config, is_ocr: bool) 
                 .stdin(Stdio::piped())
                 .spawn()
                 .context("Failed to start wl-copy")?;
-            wl_copy
+            let written = wl_copy
                 .stdin
-                .as_mut()
-                .unwrap()
-                .write_all(cleaned_txt.as_bytes())
-                .context("Failed to write to wl-copy")?;
-            let _ = wl_copy.wait();
+                .take()
+                .context("Missing wl-copy stdin")?
+                .write_all(cleaned_txt.as_bytes());
+            let status = wl_copy.wait().context("Failed waiting for wl-copy")?;
+            written.context("Failed to write to wl-copy")?;
+            anyhow::ensure!(status.success(), "wl-copy exited with {status}");
 
             // Send notification
             if !silent {
@@ -423,52 +227,37 @@ fn clean_ocr_text(input: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
 
-    #[test]
-    fn finds_hypr_monitor_containing_selection_center() {
-        let outputs = vec![
-            json!({
-                "name": "eDP-1",
-                "x": 0,
-                "y": 0,
-                "width": 2560,
-                "height": 1600,
-                "scale": 2.0
-            }),
-            json!({
-                "name": "HDMI-A-1",
-                "x": 1280,
-                "y": 0,
-                "width": 1920,
-                "height": 1080,
-                "scale": 1.0
-            }),
-        ];
-        let geometry = Geometry::new(2600, 100, 300, 200).unwrap();
-
-        let monitor = find_monitor_for_geometry(&outputs, &geometry, monitor_info_from_hypr)
-            .expect("expected monitor containing region center");
-
-        assert_eq!(monitor.name, "HDMI-A-1");
-        assert_eq!(monitor.x, 1280);
-        assert_eq!(monitor.width, 1920);
+    fn options() -> ExternalOptions {
+        ExternalOptions {
+            debug: false,
+            silent: true,
+            notification_timeout: 1000,
+        }
     }
 
     #[test]
-    fn hypr_monitor_dimensions_are_logical() {
-        let output = json!({
-            "name": "eDP-1",
-            "x": 0,
-            "y": 0,
-            "width": 2560,
-            "height": 1600,
-            "scale": 2.0
-        });
+    fn failed_ocr_does_not_treat_stdout_as_success() {
+        let geometry = Geometry::new(0, 0, 10, 10).unwrap();
+        let error = run(
+            ExternalTool::Ocr("printf 'recognized text'; exit 9 # {path}"),
+            b"png",
+            geometry,
+            options(),
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("OCR command failed"));
+    }
 
-        let monitor = monitor_info_from_hypr(&output).expect("expected monitor info");
-
-        assert_eq!(monitor.width, 2560);
-        assert_eq!(monitor.height, 1600);
+    #[test]
+    fn external_editor_receives_live_temporary_file() {
+        let geometry = Geometry::new(0, 0, 10, 10).unwrap();
+        run(
+            ExternalTool::Annotate("test -s {path}"),
+            b"png",
+            geometry,
+            options(),
+        )
+        .unwrap();
     }
 }

@@ -297,19 +297,9 @@ fn test_expand_path_tilde() {
 
 #[test]
 fn test_expand_path_env_vars() {
-    unsafe {
-        env::set_var("TEST_VAR", "/test/path");
-    }
-
-    let result = match crate::config::expand_path("$TEST_VAR/screenshots") {
-        Ok(v) => v,
-        Err(err) => panic!("Failed to expand env path: {}", err),
-    };
-    assert_eq!(result, PathBuf::from("/test/path/screenshots"));
-
-    unsafe {
-        env::remove_var("TEST_VAR");
-    }
+    let home = env::var("HOME").expect("HOME is set");
+    let result = crate::config::expand_path("$HOME/screenshots").unwrap();
+    assert_eq!(result, PathBuf::from(home).join("screenshots"));
 }
 
 #[test]
@@ -367,38 +357,24 @@ fn test_get_screenshots_dir_priority_cli() {
     let config = crate::config::Config::default();
     let cli_path = Some(PathBuf::from("/cli/path"));
 
-    unsafe {
-        env::set_var("HYSHOT_DIR", "/env/path");
-    }
-
-    let result = match crate::config::get_screenshots_dir(cli_path, &config, false) {
-        Ok(v) => v,
-        Err(err) => panic!("Failed to resolve screenshots dir (cli): {}", err),
-    };
+    let result =
+        match crate::config::resolve_screenshots_dir(cli_path, Some("/env/path"), &config, false) {
+            Ok(v) => v,
+            Err(err) => panic!("Failed to resolve screenshots dir (cli): {}", err),
+        };
     assert_eq!(result, PathBuf::from("/cli/path"));
-
-    unsafe {
-        env::remove_var("HYSHOT_DIR");
-    }
 }
 
 #[test]
 fn test_get_screenshots_dir_priority_env() {
     let config = crate::config::Config::default();
 
-    unsafe {
-        env::set_var("HYSHOT_DIR", "/env/path");
-    }
-
-    let result = match crate::config::get_screenshots_dir(None, &config, false) {
-        Ok(v) => v,
-        Err(err) => panic!("Failed to resolve screenshots dir (env): {}", err),
-    };
+    let result =
+        match crate::config::resolve_screenshots_dir(None, Some("/env/path"), &config, false) {
+            Ok(v) => v,
+            Err(err) => panic!("Failed to resolve screenshots dir (env): {}", err),
+        };
     assert_eq!(result, PathBuf::from("/env/path"));
-
-    unsafe {
-        env::remove_var("HYSHOT_DIR");
-    }
 }
 
 #[test]
@@ -406,11 +382,7 @@ fn test_get_screenshots_dir_priority_config() {
     let mut config = crate::config::Config::default();
     config.paths.screenshots_dir = "/config/path".to_string();
 
-    unsafe {
-        env::remove_var("HYSHOT_DIR");
-    }
-
-    let result = match crate::config::get_screenshots_dir(None, &config, false) {
+    let result = match crate::config::resolve_screenshots_dir(None, None, &config, false) {
         Ok(v) => v,
         Err(err) => panic!("Failed to resolve screenshots dir (config): {}", err),
     };
@@ -422,11 +394,7 @@ fn test_get_screenshots_dir_with_tilde() {
     let mut config = crate::config::Config::default();
     config.paths.screenshots_dir = "~/Screenshots".to_string();
 
-    unsafe {
-        env::remove_var("HYSHOT_DIR");
-    }
-
-    let result = match crate::config::get_screenshots_dir(None, &config, false) {
+    let result = match crate::config::resolve_screenshots_dir(None, None, &config, false) {
         Ok(v) => v,
         Err(err) => panic!("Failed to resolve screenshots dir (tilde): {}", err),
     };
@@ -451,4 +419,41 @@ fn built_in_editor_cli_and_default() {
         _ => panic!("expected edit command"),
     }
     assert_eq!(crate::config::Config::default().annotate.command, "builtin");
+}
+
+#[test]
+fn unified_editor_config_roundtrips_tool_styles() {
+    let mut config = crate::config::Config::default();
+    config.editor.active_tool = "Pencil".into();
+    config.editor.exit_after_save = true;
+    config.editor.tool_settings.insert(
+        "Pencil".into(),
+        hyshot_editor::ToolSettings {
+            stroke_width: Some(5.0),
+            stroke_color_rgba: Some([10, 20, 30, 112]),
+            ..Default::default()
+        },
+    );
+    let serialized = toml::to_string_pretty(&config).unwrap();
+    let decoded: crate::config::Config = toml::from_str(&serialized).unwrap();
+    assert_eq!(decoded.editor, config.editor);
+}
+
+#[test]
+fn config_save_replaces_complete_document() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("nested/config.toml");
+    let mut config = crate::config::Config::default();
+    config.save_to(&path).unwrap();
+    config.editor.exit_after_copy = true;
+    config.paths.screenshots_dir = "/tmp/images #1".into();
+    config.save_to(&path).unwrap();
+    let loaded: crate::config::Config =
+        toml::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    assert!(loaded.editor.exit_after_copy);
+    assert_eq!(loaded.paths.screenshots_dir, "/tmp/images #1");
+    assert_eq!(
+        std::fs::read_dir(path.parent().unwrap()).unwrap().count(),
+        1
+    );
 }

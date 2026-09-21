@@ -3,11 +3,14 @@ use clap::Parser;
 
 mod app;
 mod capture;
+mod capture_session;
 mod cli;
+mod compositor;
 mod config;
 mod config_cmds;
 mod freeze;
 mod geometry;
+mod workflow;
 
 mod external;
 mod longshot;
@@ -19,6 +22,10 @@ pub use cli::{Args, Subcommands, default_filename, resolve_delay, resolve_notif_
 
 fn main() -> Result<()> {
     let args = Args::parse();
+    let _ = env_logger::Builder::from_env(
+        env_logger::Env::default().default_filter_or(if args.debug { "debug" } else { "warn" }),
+    )
+    .try_init();
     app::run(args)
 }
 #[cfg(test)]

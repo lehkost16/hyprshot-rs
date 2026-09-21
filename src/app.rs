@@ -11,12 +11,12 @@ use crate::config_cmds::{
     handle_config_path, handle_init_config, handle_interactive_config, handle_print_binds,
     handle_set_config, handle_show_config,
 };
-use crate::external;
 use crate::freeze;
 use crate::longshot;
 use crate::record;
 use crate::save::{self, SaveOptions};
 use crate::utils;
+use crate::workflow::{self, ScreenshotAction};
 
 pub fn run(mut args: Args) -> Result<()> {
     // Handle config management commands first
@@ -77,12 +77,7 @@ pub fn run(mut args: Args) -> Result<()> {
         }
         config::Config::default()
     } else {
-        config::Config::load().unwrap_or_else(|e| {
-            if args.debug {
-                eprintln!("Failed to load config, using defaults: {}", e);
-            }
-            config::Config::default()
-        })
+        config::Config::load()?
     };
 
     let silent = if args.silent {
@@ -96,17 +91,17 @@ pub fn run(mut args: Args) -> Result<()> {
     let subcommand = match args.subcommand.take() {
         Some(cmd) => cmd,
         None => {
-            print_help();
+            use clap::CommandFactory;
+            Args::command().print_help()?;
+            println!();
             return Ok(());
         }
     };
 
     match subcommand {
-        Subcommands::Edit { images } => {
-            annotator::open_images(images.into_iter().map(|p| p.into_os_string()).collect())
-        }
-        Subcommands::Annotate => external::run_external_screenshot_tool(&args, &config, false),
-        Subcommands::Ocr => external::run_external_screenshot_tool(&args, &config, true),
+        Subcommands::Edit { images } => workflow::edit_files(images, &args, &config),
+        Subcommands::Annotate => workflow::screenshot(ScreenshotAction::Annotate, &args, &config),
+        Subcommands::Ocr => workflow::screenshot(ScreenshotAction::Ocr, &args, &config),
         Subcommands::Longshot => longshot::handle_longshot(&args, &config),
         Subcommands::Stitch {
             input,
@@ -271,45 +266,4 @@ fn countdown(seconds: u64, silent: bool) {
             .show();
         sleep(Duration::from_secs(1));
     }
-}
-
-#[allow(dead_code)]
-fn print_help() {
-    println!(
-        r#"
-Usage: shot [options ..] <command>
-
-Shot is a pure Rust screenshot utility for Wayland/Hyprland.
-
-Commands:
-  now           Take a screenshot of the current monitor
-  win           Take a screenshot of a window
-  area          Take a screenshot of a selected region
-  annotate      Take a screenshot of a selected region and open in annotation tool
-  edit          Open existing images in the built-in annotation window
-  ocr           Take a screenshot of a selected region and perform OCR
-  in5           Take a screenshot of the current monitor after 5s countdown
-  in10          Take a screenshot of the current monitor after 10s countdown
-  longshot      Start/stop a scrolling screenshot
-  record        Record a selected region of the screen (toggle start/stop)
-
-Options:
-  -h, --help                show help message
-  -o, --output-folder       directory in which to save screenshot
-  -f, --filename            the file name of the resulting screenshot
-  -D, --delay               how long to delay taking the screenshot after selection (seconds)
-  --freeze                  freeze the screen on initialization
-  -d, --debug               print debug information
-  -s, --silent              don't send notification
-  -r, --raw                 output raw image data to stdout
-  -n, --notif-timeout       notification timeout in milliseconds
-  --clipboard-only          copy screenshot to clipboard and don't save to disk
-
-Config Management:
-  --init-config             initialize default config file
-  --show-config             show current configuration
-  --config-path             show path to config file
-  --set KEY VALUE           set config value
-"#
-    );
 }

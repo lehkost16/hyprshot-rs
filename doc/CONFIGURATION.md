@@ -2,6 +2,39 @@
 
 Minimal configuration reference aligned with actual behavior.
 
+## Built-in editor
+
+The editor shares hyshot's config. It does not read or migrate
+`~/.config/annotator/config.toml`.
+
+```toml
+[annotate]
+command = "builtin"
+
+[editor]
+marker_pen_straight_mode = true
+auto_activate_default_tool = false
+auto_deactivate_tool_after_draw = false
+active_tool = "Rectangle"
+exit_after_copy = false
+exit_after_save = false
+
+[editor.tool_settings.Pencil]
+stroke_width = 5.0
+stroke_color_rgba = [255, 69, 58, 255]
+```
+
+Preferences are shared in memory and saved on normal editor exit. Simple fields
+also support `hyshot --set editor.exit_after_copy true`. `--no-config` uses
+defaults without writing preferences. Invalid TOML is an error, not a reason to
+silently replace preferences with defaults.
+
+Editor Save creates a new PNG in `--output-folder`, `HYSHOT_DIR`, or
+`paths.screenshots_dir`, in that order. The old editor `save_directory` is not
+used. Explicit Save/Copy are separate actions, independent of capture's
+automatic `save_file` policy. Notifications respect `--silent` and
+`capture.notification`.
+
 ## Overview
 
 - Config is a TOML file.

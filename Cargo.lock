@@ -120,35 +120,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "annotator"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "delegate",
- "egui",
- "egui-wgpu",
- "egui_extras",
- "env_logger",
- "image",
- "imageproc",
- "indexmap",
- "log",
- "pollster 1.0.1",
- "raw-window-handle",
- "rfd",
- "rustc-hash 2.1.3",
- "smithay-client-toolkit 0.21.1",
- "smithay-clipboard",
- "spire_enum",
- "taffy",
- "wayland-backend",
- "wayland-client",
- "wayland-protocols 0.32.13",
- "wayland-sys",
- "wgpu",
-]
-
-[[package]]
 name = "anstream"
 version = "0.6.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1819,14 +1790,15 @@ checksum = "dfa686283ad6dd069f105e5ab091b04c62850d3e4cf5d67debad1933f55023df"
 name = "hyshot"
 version = "0.1.9"
 dependencies = [
- "annotator",
  "anyhow",
  "chrono",
  "clap",
  "dialoguer",
  "directories",
  "dirs",
+ "env_logger",
  "grim-rs",
+ "hyshot-editor",
  "image",
  "memmap2",
  "notify-rust",
@@ -1839,6 +1811,37 @@ dependencies = [
  "wayland-client",
  "wayland-protocols 0.32.13",
  "wayland-protocols-wlr 0.3.6",
+]
+
+[[package]]
+name = "hyshot-editor"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "delegate",
+ "egui",
+ "egui-wgpu",
+ "egui_extras",
+ "image",
+ "imageproc",
+ "indexmap",
+ "log",
+ "notify-rust",
+ "pollster 1.0.1",
+ "raw-window-handle",
+ "rfd",
+ "rustc-hash 2.1.3",
+ "serde",
+ "smithay-client-toolkit 0.21.1",
+ "smithay-clipboard",
+ "spire_enum",
+ "taffy",
+ "tempfile",
+ "wayland-backend",
+ "wayland-client",
+ "wayland-protocols 0.32.13",
+ "wayland-sys",
+ "wgpu",
 ]
 
 [[package]]

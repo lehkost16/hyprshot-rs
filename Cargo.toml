@@ -10,27 +10,28 @@ homepage = "https://github.com/shikoucore/hyshot"
 keywords = ["hyprland", "screenshot", "wayland", "cli"]
 categories = ["command-line-utilities", "graphics"]
 readme = "README.md"
-include = ["src/**", "crates/annotator/**", "Cargo.toml", "Cargo.lock", "README.md", "LICENSE*"]
+include = ["src/**", "Cargo.toml", "Cargo.lock", "rust-toolchain.toml", "README.md", "LICENSE*"]
 
 [workspace]
-members = ["crates/annotator"]
+members = ["crates/editor"]
 resolver = "3"
 
 [dependencies]
-annotator = { path = "crates/annotator" }
+hyshot-editor = { path = "crates/editor" }
 clap = { version = "4.5", features = ["derive"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 toml = "1.0"
 notify-rust = "4.11"
 anyhow = "1.0"
+env_logger = "0.11.8"
 dirs = "6.0"
 directories = "6.0"
 chrono = "0.4"
 dialoguer = "0.12"
 grim-rs = { version = "0.2", optional = true }
 memmap2 = { version = "0.9", optional = true }
-tempfile = { version = "3.10", optional = true }
+tempfile = "3.10"
 slurp-rs = "0.2.0"
 image = "0.25"
 rayon = "1.10.0"
@@ -49,6 +50,7 @@ version = "0.3"
 optional = true
 features = ["client"]
 
+
 [features]
 default = ["grim", "freeze"]
 grim = ["grim-rs"]
@@ -58,5 +60,4 @@ freeze = [
   "wayland-protocols",
   "wayland-protocols-wlr",
   "memmap2",
-  "tempfile",
 ]

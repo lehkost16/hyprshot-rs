@@ -130,6 +130,21 @@ fn set_config_value(config: &mut config::Config, key: &str, value: &str) -> Resu
             config.annotate.command = value.to_string();
         }
 
+        ("editor", field) => {
+            let mut settings = toml::Value::try_from(&config.editor)?;
+            let slot = settings
+                .get_mut(field)
+                .with_context(|| format!("Unknown editor setting: {field}"))?;
+            *slot = match slot {
+                toml::Value::Boolean(_) => {
+                    toml::Value::Boolean(value.parse().context("Value must be 'true' or 'false'")?)
+                }
+                toml::Value::String(_) => toml::Value::String(value.to_owned()),
+                _ => anyhow::bail!("Edit per-tool styles through the editor or TOML configuration"),
+            };
+            config.editor = settings.try_into()?;
+        }
+
         // [ocr] section
         ("ocr", "command") => {
             config.ocr.command = value.to_string();
@@ -664,4 +679,20 @@ fn configure_tools(config: &mut config::Config) -> Result<()> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn editor_settings_use_existing_config_command() {
+        let mut config = config::Config::default();
+        set_config_value(&mut config, "editor.exit_after_copy", "true").unwrap();
+        set_config_value(&mut config, "editor.active_tool", "Pencil").unwrap();
+        assert!(config.editor.exit_after_copy);
+        assert_eq!(config.editor.active_tool, "Pencil");
+        assert!(set_config_value(&mut config, "editor.exit_after_save", "yes").is_err());
+        assert!(set_config_value(&mut config, "editor.unknown", "true").is_err());
+    }
 }

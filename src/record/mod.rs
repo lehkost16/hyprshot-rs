@@ -7,7 +7,6 @@ use std::{
     io::Write,
     path::{Path, PathBuf},
     process::{Command, Stdio},
-    time::Duration,
 };
 
 use crate::cli::Args;
@@ -30,13 +29,9 @@ struct RecordState {
     temp_video_path: Option<String>,
 }
 
-fn is_process_running(pid: u32) -> bool {
-    Path::new(&format!("/proc/{}", pid)).exists()
-}
-
 pub fn handle_record(args: &Args, config: &config::Config) -> Result<()> {
     let debug = args.debug;
-    let silent = args.silent;
+    let silent = args.silent || !config.capture.notification;
     let notif_timeout = args
         .notif_timeout
         .unwrap_or(config.capture.notification_timeout);
@@ -55,23 +50,7 @@ pub fn handle_record(args: &Args, config: &config::Config) -> Result<()> {
             eprintln!("Stopping recording: {:?}", state);
         }
 
-        // Stop wl-screenrec (SIGINT / -2 to save the video cleanly with MP4 headers)
-        let _ = Command::new("kill")
-            .arg("-2")
-            .arg(state.pid.to_string())
-            .status();
-
-        // Stop overlay process (SIGTERM)
-        let _ = Command::new("kill")
-            .arg(state.overlay_pid.to_string())
-            .status();
-
-        // Wait for processes to exit
-        let mut wait_count = 0;
-        while is_process_running(state.pid) && wait_count < 25 {
-            std::thread::sleep(Duration::from_millis(200));
-            wait_count += 1;
-        }
+        crate::capture_session::stop(state.pid, state.overlay_pid)?;
 
         // Delete state file
         let _ = fs::remove_file(&state_file);
@@ -184,8 +163,8 @@ pub fn handle_record(args: &Args, config: &config::Config) -> Result<()> {
 
         // Query the monitor containing the selected region, so the overlay border
         // is drawn in the same output coordinate space as the recording.
-        let monitor_info = crate::external::get_monitor_info_for_geometry(&geometry, debug)
-            .unwrap_or_else(|_| crate::external::MonitorInfo {
+        let monitor_info = crate::compositor::get_monitor_info_for_geometry(&geometry, debug)
+            .unwrap_or_else(|_| crate::compositor::MonitorInfo {
                 name: "eDP-1".to_string(),
                 scale: 1.0,
                 x: 0,
@@ -255,42 +234,10 @@ pub fn handle_record(args: &Args, config: &config::Config) -> Result<()> {
         cmd.args(&config.record.command_args);
         cmd.stdout(Stdio::null()).stderr(Stdio::null());
 
-        let rec_child = cmd
-            .spawn()
-            .context("Failed to spawn wl-screenrec. Please ensure it is installed: sudo pacman -S wl-screenrec")?;
-        let rec_pid = rec_child.id();
-
-        // Spawn overlay
-        let log_file = debug
-            .then(|| std::fs::File::create(utils::runtime_state_path("overlay.log")).ok())
-            .flatten();
-        let stderr_cfg = log_file.map(Stdio::from).unwrap_or_else(Stdio::null);
-
-        let exe_path = std::env::current_exe().context("Failed to get current executable path")?;
-        let overlay_child = Command::new(exe_path)
-            .arg("overlay")
-            .arg("--x")
-            .arg(geometry.x.to_string())
-            .arg("--y")
-            .arg(geometry.y.to_string())
-            .arg("--w")
-            .arg(geometry.width.to_string())
-            .arg("--h")
-            .arg(geometry.height.to_string())
-            .arg("--scale")
-            .arg(scale.to_string())
-            .arg("--monitor")
-            .arg(&monitor_info.name)
-            .arg("--ox")
-            .arg(monitor_info.x.to_string())
-            .arg("--oy")
-            .arg(monitor_info.y.to_string())
-            .args(debug.then_some("--debug"))
-            .stdout(Stdio::null())
-            .stderr(stderr_cfg)
-            .spawn()
-            .context("Failed to spawn overlay process")?;
-        let overlay_pid = overlay_child.id();
+        let capture =
+            crate::capture_session::StartedCapture::start(cmd, &geometry, &monitor_info, debug)?;
+        let rec_pid = capture.recorder_pid();
+        let overlay_pid = capture.overlay_pid();
 
         // Write state file
         let state = RecordState {
@@ -300,9 +247,7 @@ pub fn handle_record(args: &Args, config: &config::Config) -> Result<()> {
             recording_path: record_path_str.clone(),
             temp_video_path: if is_gif { Some(record_path_str) } else { None },
         };
-        let state_json =
-            serde_json::to_string_pretty(&state).context("Failed to serialize state to JSON")?;
-        fs::write(&state_file, state_json).context("Failed to write record state file")?;
+        capture.commit(&state_file, &state)?;
 
         // Send starting notification
         if !silent {

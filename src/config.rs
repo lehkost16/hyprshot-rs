@@ -17,6 +17,8 @@ pub struct Config {
     #[serde(default)]
     pub annotate: AnnotateConfig,
     #[serde(default)]
+    pub editor: hyshot_editor::EditorSettings,
+    #[serde(default)]
     pub ocr: OcrConfig,
     #[serde(default)]
     pub longshot: LongshotConfig,
@@ -455,6 +457,7 @@ impl Default for Config {
             capture: CaptureConfig::default(),
             advanced: AdvancedConfig::default(),
             annotate: AnnotateConfig::default(),
+            editor: hyshot_editor::EditorSettings::default(),
             ocr: OcrConfig::default(),
             longshot: LongshotConfig::default(),
             record: RecordConfig::default(),
@@ -584,6 +587,20 @@ pub fn get_screenshots_dir(
     config: &Config,
     debug: bool,
 ) -> Result<PathBuf> {
+    resolve_screenshots_dir(
+        cli_path,
+        env::var("HYSHOT_DIR").ok().as_deref(),
+        config,
+        debug,
+    )
+}
+
+pub(crate) fn resolve_screenshots_dir(
+    cli_path: Option<PathBuf>,
+    env_path: Option<&str>,
+    config: &Config,
+    debug: bool,
+) -> Result<PathBuf> {
     if let Some(path) = cli_path {
         if debug {
             eprintln!("Using screenshot directory from CLI: {}", path.display());
@@ -591,8 +608,8 @@ pub fn get_screenshots_dir(
         return Ok(path);
     }
 
-    if let Ok(env_path) = env::var("HYSHOT_DIR") {
-        let expanded = expand_path(&env_path)?;
+    if let Some(env_path) = env_path {
+        let expanded = expand_path(env_path)?;
         if debug {
             eprintln!(
                 "Using screenshot directory from HYSHOT_DIR: {}",
@@ -684,25 +701,27 @@ impl Config {
     /// Save configuration to file
     /// Creates config directory if it doesn't exist
     pub fn save(&self) -> Result<()> {
-        let config_dir = Self::config_dir()?;
         let config_path = Self::config_path()?;
+        self.save_to(&config_path)
+    }
 
-        if !config_dir.exists() {
-            fs::create_dir_all(&config_dir).context(format!(
-                "Failed to create config directory: {}",
-                config_dir.display()
-            ))?;
-        }
+    pub(crate) fn save_to(&self, config_path: &std::path::Path) -> Result<()> {
+        use std::io::Write;
+        let config_dir = config_path.parent().context("Config path has no parent")?;
+        fs::create_dir_all(config_dir).context("Failed to create config directory")?;
 
         let toml_string =
             toml::to_string_pretty(self).context("Failed to serialize config to TOML")?;
 
         let commented_toml = Self::add_comments(&toml_string);
 
-        fs::write(&config_path, commented_toml).context(format!(
-            "Failed to write config file: {}",
-            config_path.display()
-        ))?;
+        let mut temp = tempfile::NamedTempFile::new_in(config_dir)
+            .context("Failed to create config temporary file")?;
+        temp.write_all(commented_toml.as_bytes())
+            .context("Failed to write config")?;
+        temp.as_file().sync_all().context("Failed to sync config")?;
+        temp.persist(config_path)
+            .context("Failed to replace config")?;
 
         Ok(())
     }

@@ -66,8 +66,15 @@ hyshot edit /path/to/image.png
 `hyshot annotate` captures a region and opens the built-in editor when
 `annotate.command = "builtin"`. `hyshot edit` opens existing images (or a
 file picker with no paths), without taking another screenshot. The editor
-retains annotator's settings and toolbar expand/collapse control.
+retains the toolbar expand/collapse control. Preferences now live in hyshot's
+`[editor]` section; `~/.config/annotator/config.toml` is not read or auto-migrated.
+Edited images follow hyshot's screenshot output-directory rules.
 Existing external annotation commands remain supported.
+
+The editor is the `hyshot-editor` library in `crates/editor`, not a separately
+launched executable. Captured PNG data is passed in memory. Chinese fonts are
+resolved at runtime with fontconfig (`fc-match`); install a CJK font on the target
+system. See [Architecture](doc/ARCHITECTURE.md) for module boundaries.
 
 ### Command Syntax
 ```bash
@@ -190,7 +197,7 @@ Here is a complete list of all available configuration sections and options:
   * *Default:* `0`
 
 #### `[annotate]`
-* **`command`** (string) — External command to execute for annotations when using `hyshot annotate`. `{path}` is replaced with the screenshot path.
+* **`command`** (string) — `builtin` selects the integrated editor. Other values explicitly select an external command, with `{path}` replaced by the screenshot path.
   * *Default:* `"builtin"` opens the integrated annotator. Existing custom commands remain supported.
 
 #### `[ocr]`

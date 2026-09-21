@@ -22,9 +22,12 @@ Hyshot is one application with an internal editor library, not two executables.
   same-directory temporary files and atomic replacement.
 
 Recorders remain OS processes because recording outlives the invoking CLI.
-Editing runs in-process on the main thread. PID-based recording state still
-lacks process-start identity and concurrent-toggle locking; shared lifecycle
-management does not by itself solve those remaining risks.
+Editing runs in-process on the main thread. Recording and longshot each hold an
+exclusive toggle/finalization lock under XDG_RUNTIME_DIR/hyshot. Process identities
+include boot ID and start ticks; pidfds bind signals to the verified process.
+Recording, Finalizing and Failed states keep failed conversions retryable without
+signalling another process. No PID-only fallback is used. Final outputs refuse
+overwrite; conversion failures retain the source and session state.
 
 ## Editor
 

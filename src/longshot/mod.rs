@@ -9,29 +9,25 @@ use std::{
     process::{Command, Stdio},
 };
 
+use crate::capture_session::{self, Phase, Session, SessionLock};
 use crate::cli::Args;
 use crate::config;
 use crate::selector;
-use crate::utils;
 
 mod canvas;
 mod decoder;
 pub mod overlay;
 pub mod stitcher;
 
-fn state_file_path() -> std::path::PathBuf {
-    utils::runtime_state_path("longshot.json")
+fn state_file_path() -> Result<std::path::PathBuf> {
+    capture_session::state_path("longshot.json")
 }
 
 #[derive(Serialize, Deserialize, Debug)]
 struct LongshotState {
-    pid: u32,
-    overlay_pid: u32,
+    session: Session,
     video_path: String,
     output_path: String,
-    w: i32,
-    h: i32,
-    scale: f64,
 }
 
 pub struct StitchRequest {
@@ -49,21 +45,24 @@ pub fn handle_longshot(args: &Args, config: &config::Config) -> Result<()> {
         .notif_timeout
         .unwrap_or(config.capture.notification_timeout);
 
-    let state_file = state_file_path();
+    let state_file = state_file_path()?;
+    let _lock = SessionLock::acquire(&state_file)?;
 
     // Check if a longshot recording is already active
     if state_file.exists() {
         // Read state
         let state_data =
             fs::read_to_string(&state_file).context("Failed to read longshot state file")?;
-        let state: LongshotState =
+        let mut state: LongshotState =
             serde_json::from_str(&state_data).context("Failed to parse longshot state JSON")?;
 
         if debug {
             eprintln!("Stopping longshot recording: {:?}", state);
         }
 
-        crate::capture_session::stop(state.pid, state.overlay_pid)?;
+        state.session.stop()?;
+        state.session.phase = Phase::Finalizing;
+        capture_session::write_state(&state_file, &state)?;
 
         // Send stitching notification
         if !silent {
@@ -123,6 +122,8 @@ pub fn handle_longshot(args: &Args, config: &config::Config) -> Result<()> {
                 }
             }
             Err(err) => {
+                state.session.phase = Phase::Failed;
+                capture_session::write_state(&state_file, &state)?;
                 if !silent {
                     let _ = Notification::new()
                         .summary("Longshot error")
@@ -143,11 +144,7 @@ pub fn handle_longshot(args: &Args, config: &config::Config) -> Result<()> {
     } else {
         // Start longshot recording
         let save_dir = config::get_screenshots_dir(args.output_folder.clone(), config, debug)?;
-        let save_dir = if !args.clipboard_only && !args.raw {
-            config::ensure_directory(&save_dir.to_string_lossy())?
-        } else {
-            save_dir
-        };
+        let save_dir = config::ensure_directory(&save_dir.to_string_lossy())?;
 
         // Select region
         let geometry = selector::select_region(debug)?;
@@ -157,11 +154,18 @@ pub fn handle_longshot(args: &Args, config: &config::Config) -> Result<()> {
         let monitor_info = crate::compositor::get_monitor_info_for_geometry(&geometry, debug)?;
         let scale = monitor_info.scale;
 
-        let video_path = std::env::temp_dir()
-            .join(format!("shot_longshot_{}.mp4", std::process::id()))
+        let video_path = save_dir
+            .join(format!(
+                ".longshot_{}_{}.recording.mp4",
+                Local::now().timestamp_millis(),
+                std::process::id()
+            ))
             .to_string_lossy()
             .to_string();
-        let filename = format!("longshot_{}.png", Local::now().format("%Y-%m-%d-%H%M%S"));
+        let filename = format!(
+            "longshot_{}.png",
+            Local::now().format("%Y-%m-%d-%H%M%S-%3f")
+        );
         let output_path = save_dir.join(filename);
 
         if debug {
@@ -201,18 +205,13 @@ pub fn handle_longshot(args: &Args, config: &config::Config) -> Result<()> {
             &monitor_info,
             debug,
         )?;
-        let rec_pid = capture.recorder_pid();
-        let overlay_pid = capture.overlay_pid();
+        let session = capture.session()?;
 
         // Write state file
         let state = LongshotState {
-            pid: rec_pid,
-            overlay_pid,
+            session,
             video_path,
             output_path: output_path.to_string_lossy().to_string(),
-            w: geometry.width,
-            h: geometry.height,
-            scale,
         };
         capture.commit(&state_file, &state)?;
 

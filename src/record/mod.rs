@@ -9,21 +9,19 @@ use std::{
     process::{Command, Stdio},
 };
 
+use crate::capture_session::{self, Phase, Session, SessionLock};
 use crate::cli::Args;
 use crate::config;
 use crate::selector;
-use crate::utils;
 
-fn state_file_path() -> std::path::PathBuf {
-    utils::runtime_state_path("record.json")
+fn state_file_path() -> Result<PathBuf> {
+    capture_session::state_path("record.json")
 }
 
 #[derive(Serialize, Deserialize, Debug)]
 struct RecordState {
-    pid: u32,
-    overlay_pid: u32,
+    session: Session,
     video_path: String,
-    #[serde(default)]
     recording_path: String,
     #[serde(default)]
     temp_video_path: Option<String>,
@@ -36,112 +34,51 @@ pub fn handle_record(args: &Args, config: &config::Config) -> Result<()> {
         .notif_timeout
         .unwrap_or(config.capture.notification_timeout);
 
-    let state_file = state_file_path();
+    let state_file = state_file_path()?;
+    let _lock = SessionLock::acquire(&state_file)?;
 
     // Check if recording is already active
     if state_file.exists() {
         // Read state
         let state_data =
             fs::read_to_string(&state_file).context("Failed to read record state file")?;
-        let state: RecordState =
+        let mut state: RecordState =
             serde_json::from_str(&state_data).context("Failed to parse record state JSON")?;
 
         if debug {
             eprintln!("Stopping recording: {:?}", state);
         }
 
-        crate::capture_session::stop(state.pid, state.overlay_pid)?;
-
-        // Delete state file
-        let _ = fs::remove_file(&state_file);
-
-        let mut final_path = state.video_path.clone();
-        let mut conversion_succeeded = false;
-
-        if let Some(ref temp_path) = state.temp_video_path {
-            if debug {
-                eprintln!(
-                    "Converting temporary video {} to GIF {}",
-                    temp_path, state.video_path
-                );
-            }
-            if !silent {
-                let _ = Notification::new()
-                    .summary("🎥 正在转换GIF...")
-                    .body("录像已结束，正在生成高质量GIF，请稍候...")
-                    .timeout(notif_timeout as i32)
-                    .appname("Shot")
-                    .show();
-            }
-
-            let ffmpeg_status = Command::new("ffmpeg")
-                .arg("-y")
-                .arg("-i")
-                .arg(temp_path)
-                .arg("-vf")
-                .arg("fps=15,scale=flags=lanczos,split[s0][s1];[s0]palettegen[p];[s1][p]paletteuse")
-                .arg(&state.video_path)
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .status();
-
-            match ffmpeg_status {
-                Ok(status) if status.success() => {
-                    conversion_succeeded = true;
-                    // Delete intermediate file
-                    let _ = fs::remove_file(temp_path);
-                    if debug {
-                        eprintln!("GIF conversion succeeded, deleted temp file.");
-                    }
-                }
-                other => {
-                    eprintln!(
-                        "Warning: ffmpeg conversion failed or returned error: {:?}",
-                        other
-                    );
-                    // Fallback to original webm
-                    final_path = temp_path.clone();
-                }
-            }
-        } else if !state.recording_path.is_empty() && state.recording_path != state.video_path {
-            move_finished_recording(&state.recording_path, &state.video_path)?;
+        state.session.stop()?;
+        state.session.phase = Phase::Finalizing;
+        capture_session::write_state(&state_file, &state)?;
+        if let Err(error) = finalize_recording(&state) {
+            state.session.phase = Phase::Failed;
+            capture_session::write_state(&state_file, &state)?;
+            return Err(error).context(format!(
+                "Recording retained at {}; run record again to retry finalization",
+                state.recording_path
+            ));
         }
-
-        // Copy the output path to clipboard
-        let wl_copy_cmd = Command::new("wl-copy").stdin(Stdio::piped()).spawn();
-        if let Ok(mut child) = wl_copy_cmd {
-            if let Some(mut stdin) = child.stdin.take() {
-                let _ = stdin.write_all(final_path.as_bytes());
-            }
-            let _ = child.wait();
-        }
-
-        // Send success notification
+        fs::remove_file(&state_file).context("Cannot remove completed recording state")?;
+        let final_path = &state.video_path;
+        let copied = copy_path(final_path);
         if !silent {
-            let (summary, body) = if state.temp_video_path.is_some() {
-                if conversion_succeeded {
-                    (
-                        "🎥 GIF已生成".to_string(),
-                        format!("GIF已保存至: {}\n路径已复制到剪贴板", final_path),
-                    )
+            let body = format!(
+                "视频已保存至: {}{}",
+                final_path,
+                if copied {
+                    "\n路径已复制到剪贴板"
                 } else {
-                    (
-                        "🎥 GIF转换失败".to_string(),
-                        format!(
-                            "转换失败，原视频已保存至: {}\n路径已复制到剪贴板",
-                            final_path
-                        ),
-                    )
+                    "\n剪贴板复制失败"
                 }
-            } else {
-                (
-                    "🎥 录屏已完成".to_string(),
-                    format!("视频已保存至: {}\n路径已复制到剪贴板", final_path),
-                )
-            };
-
+            );
             let _ = Notification::new()
-                .summary(&summary)
+                .summary(if state.temp_video_path.is_some() {
+                    "GIF已生成"
+                } else {
+                    "录屏已完成"
+                })
                 .body(&body)
                 .timeout(notif_timeout as i32)
                 .appname("Shot")
@@ -168,7 +105,7 @@ pub fn handle_record(args: &Args, config: &config::Config) -> Result<()> {
 
         let filename = format!(
             "record_{}.{}",
-            Local::now().format("%Y-%m-%d-%H%M%S"),
+            Local::now().format("%Y-%m-%d-%H%M%S-%3f"),
             config.record.format
         );
         let video_path = save_dir.join(filename);
@@ -228,13 +165,11 @@ pub fn handle_record(args: &Args, config: &config::Config) -> Result<()> {
 
         let capture =
             crate::capture_session::StartedCapture::start(cmd, &geometry, &monitor_info, debug)?;
-        let rec_pid = capture.recorder_pid();
-        let overlay_pid = capture.overlay_pid();
+        let session = capture.session()?;
 
         // Write state file
         let state = RecordState {
-            pid: rec_pid,
-            overlay_pid,
+            session,
             video_path: video_path_str,
             recording_path: record_path_str.clone(),
             temp_video_path: if is_gif { Some(record_path_str) } else { None },
@@ -267,14 +202,92 @@ fn runtime_recording_path(final_path: &Path, ext: &str) -> Result<PathBuf> {
     Ok(parent.join(filename))
 }
 
+fn copy_path(path: &str) -> bool {
+    let Ok(mut child) = Command::new("wl-copy").stdin(Stdio::piped()).spawn() else {
+        return false;
+    };
+    let written = child
+        .stdin
+        .take()
+        .is_some_and(|mut stdin| stdin.write_all(path.as_bytes()).is_ok());
+    child.wait().is_ok_and(|status| status.success()) && written
+}
+
+fn finalize_recording(state: &RecordState) -> Result<()> {
+    anyhow::ensure!(
+        fs::metadata(&state.recording_path)?.len() > 0,
+        "Recording is empty"
+    );
+    if let Some(source) = &state.temp_video_path {
+        let output = Path::new(&state.video_path);
+        let temporary = tempfile::Builder::new().suffix(".gif").tempfile_in(
+            output
+                .parent()
+                .context("Recording has no output directory")?,
+        )?;
+        let status = Command::new("ffmpeg")
+            .args(["-nostdin", "-v", "error", "-y", "-i"])
+            .arg(source)
+            .args([
+                "-vf",
+                "fps=15,split[s0][s1];[s0]palettegen[p];[s1][p]paletteuse",
+            ])
+            .arg(temporary.path())
+            .stdout(Stdio::null())
+            .status()
+            .context("Cannot start GIF conversion")?;
+        anyhow::ensure!(status.success(), "GIF conversion failed");
+        anyhow::ensure!(
+            temporary.as_file().metadata()?.len() > 0,
+            "GIF output is empty"
+        );
+        temporary
+            .persist_noclobber(output)
+            .context("Cannot publish GIF; existing files are never overwritten")?;
+        // Publishing succeeded; cleanup must not turn a finished output into a retry.
+        if let Err(error) = fs::remove_file(source) {
+            eprintln!("Cannot remove intermediate recording: {error}");
+        }
+    } else {
+        move_finished_recording(&state.recording_path, &state.video_path)?;
+    }
+    Ok(())
+}
+
 fn move_finished_recording(from: &str, to: &str) -> Result<()> {
-    fs::rename(from, to)
-        .with_context(|| format!("Failed to rename recording from '{}' to '{}'", from, to))
+    fs::hard_link(from, to).with_context(|| {
+        format!(
+            "Cannot publish recording '{}' as '{}' without overwriting",
+            from, to
+        )
+    })?;
+    if let Err(error) = fs::remove_file(from) {
+        eprintln!("Cannot remove intermediate recording: {error}");
+    }
+    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn publishing_never_overwrites_and_retains_source_on_failure() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("source.mp4");
+        let target = dir.path().join("target.mp4");
+        fs::write(&source, b"new recording").unwrap();
+        fs::write(&target, b"existing recording").unwrap();
+        assert!(
+            move_finished_recording(source.to_str().unwrap(), target.to_str().unwrap()).is_err()
+        );
+        assert_eq!(fs::read(&source).unwrap(), b"new recording");
+        assert_eq!(fs::read(&target).unwrap(), b"existing recording");
+        fs::remove_file(&target).unwrap();
+        move_finished_recording(source.to_str().unwrap(), target.to_str().unwrap()).unwrap();
+        assert!(!source.exists());
+        assert_eq!(fs::read(&target).unwrap(), b"new recording");
+    }
 
     #[test]
     fn runtime_recording_path_uses_hidden_file_next_to_final_output() {

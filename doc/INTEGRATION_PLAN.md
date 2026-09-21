@@ -14,7 +14,7 @@ is 4331db8; d91f0e6 preserves the experimental restructuring for comparison.
   rotation, negative origins and cross-output recording validation.
 - [x] 2. Bounded longshot decoding and incremental stitching; explicit canvas
   limits, decoder failure handling and reproducible synthetic-video tests.
-- [ ] 3. Recording session ownership; concurrent-toggle locking, process identity,
+- [x] 3. Recording session ownership; concurrent-toggle locking, process identity,
   finalizing/failure states and recoverable output handling.
 - [ ] 4. Separate explicit editor preferences from remembered tool styles. No
   implicit old-config migration. One host-owned state store and output policy.

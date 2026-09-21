@@ -1801,6 +1801,7 @@ dependencies = [
  "hyshot-core",
  "hyshot-editor",
  "image",
+ "libc",
  "memmap2",
  "notify-rust",
  "rayon",

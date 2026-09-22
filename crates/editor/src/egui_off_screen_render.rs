@@ -75,6 +75,7 @@ impl EguiOffScreenRender {
             ..Default::default()
         };
         crate::texture::set_texture_limit(
+            &egui_ctx,
             &mut raw_input,
             self.device.limits().max_texture_dimension_2d,
         );

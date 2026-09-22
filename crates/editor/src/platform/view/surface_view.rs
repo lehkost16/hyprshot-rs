@@ -323,7 +323,11 @@ impl<'window> SurfaceView<'window> {
             .device
             .limits()
             .max_texture_dimension_2d;
-        crate::texture::set_texture_limit(&mut raw_input, max_texture_side);
+        crate::texture::set_texture_limit(
+            self.egui_ctx.as_ref().unwrap(),
+            &mut raw_input,
+            max_texture_side,
+        );
 
         // 设置逻辑像素与对应的物理像素的比例
         self.egui_ctx

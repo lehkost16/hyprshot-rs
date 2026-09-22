@@ -314,6 +314,16 @@ impl<'window> SurfaceView<'window> {
     fn run_egui(&mut self, app: &mut Application, window: &mut AppWindow) -> FullOutput {
         // 准备 Egui 输入
         let mut raw_input = self.egui_input.raw.take();
+        let max_texture_side = app
+            .global_state
+            .gpu
+            .borrow()
+            .as_ref()
+            .expect("GPU initialized before drawing")
+            .device
+            .limits()
+            .max_texture_dimension_2d;
+        crate::texture::set_texture_limit(&mut raw_input, max_texture_side);
 
         // 设置逻辑像素与对应的物理像素的比例
         self.egui_ctx

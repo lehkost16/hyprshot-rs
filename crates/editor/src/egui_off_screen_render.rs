@@ -67,13 +67,17 @@ impl EguiOffScreenRender {
         egui_ctx.set_pixels_per_point(pixels_per_point);
         egui_ctx.set_extra_zoom_factor(extra_zoom_factor);
 
-        let raw_input = RawInput {
+        let mut raw_input = RawInput {
             screen_rect: Some(Rect::from_min_size(
                 pos2(0., 0.),
                 vec2(virtual_screen_size.width, virtual_screen_size.height),
             )),
             ..Default::default()
         };
+        crate::texture::set_texture_limit(
+            &mut raw_input,
+            self.device.limits().max_texture_dimension_2d,
+        );
         let full_output = build_ui(raw_input, &mut egui_ctx);
 
         // 更新纹理
@@ -296,7 +300,7 @@ mod tests {
         }
         use crate::annotator::rectangle_based::{RectangleAnnotation, RectangleStyle};
         use crate::annotator::{ActivationSupport, Annotation, AnnotatorState};
-        let original = Arc::new(RgbaImage::from_pixel(101, 53, Rgba([10, 20, 30, 255])));
+        let original = Arc::new(RgbaImage::from_pixel(2246, 612, Rgba([10, 20, 30, 255])));
         let mut state = AnnotatorState {
             session: crate::config::EditorSession::new(Default::default()),
             extra_zoom_factor: 0.25,

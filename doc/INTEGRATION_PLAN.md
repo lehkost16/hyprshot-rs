@@ -18,8 +18,17 @@ is 4331db8; d91f0e6 preserves the experimental restructuring for comparison.
   finalizing/failure states and recoverable output handling.
 - [x] 4. Separate explicit editor preferences from remembered tool styles. No
   implicit old-config migration. One host-owned state store and output policy.
-- [ ] 5. Feed captures, files and stitched images through the document contract;
-  preserve toolbar UX and validate ordinary capture/editor/export workflows.
+- [x] 5. Feed captures, files and stitched images through the document contract;
+  preserve toolbar UX and validate decoding, CLI and offscreen export paths.
+
+## Desktop Acceptance Still Required
+
+- [x] Real Wayland editor startup and rendered toolbar, with a generated 961x601
+  fixture on the user's 2560x1600, 125% eDP-1 output. No installed binary changed.
+- [ ] Mixed-scale/rotated-monitor region selection and recording border alignment.
+- [ ] Actual wl-screenrec stop, GIF finalization and clipboard ownership.
+- [ ] Interactive editor keyboard, toolbar toggle, save/copy and window movement.
+- [ ] Install only after acceptance; the current work has not replaced user binaries.
 
 Each stage is verified and committed separately. Unit tests are not desktop
 acceptance. Do not install over the user's binaries until Wayland workflows are

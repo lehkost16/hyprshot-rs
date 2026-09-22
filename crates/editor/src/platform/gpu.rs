@@ -21,7 +21,14 @@ impl GpuContext {
         }))
         .context("Failed to find suitable adapter")?;
 
-        let (device, queue) = pollster::block_on(adapter.request_device(&Default::default()))
+        let descriptor = wgpu::DeviceDescriptor {
+            required_limits: wgpu::Limits {
+                max_texture_dimension_2d: adapter.limits().max_texture_dimension_2d,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let (device, queue) = pollster::block_on(adapter.request_device(&descriptor))
             .context("Failed to request device")?;
 
         Ok(Self {

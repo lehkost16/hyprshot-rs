@@ -8,7 +8,29 @@ This document lists CLI flags and mode semantics. For an overview and general ex
 hyshot [OPTIONS] -m <MODE> [-- COMMAND]
 ```
 
-## Screenshot Modes
+## Editor And Longshot
+
+```bash
+hyshot annotate
+hyshot edit image.png
+hyshot longshot --edit
+# Scroll, then stop; the saved session remembers --edit:
+hyshot longshot
+hyshot stitch recording.mp4 --output result.png --edit
+```
+
+`--edit` is optional. Longshot/stitch always save the PNG before opening the
+built-in editor. If the editor cannot open the image, the saved PNG remains.
+Width/height/scale overrides are not supported: video dimensions come from
+ffprobe. Existing output files are never overwritten.
+
+Recording and longshot require XDG_RUNTIME_DIR and Linux pidfd support. A failed
+conversion retains the raw recording and session state; invoking the same toggle
+again retries finalization. Do not delete state while a capture is running. Runtime
+state is not migrated from older builds: stop existing recordings before switching
+versions. Session locks reject concurrent toggles instead of spawning duplicates.
+
+## Screenshot Mode Selection
 
 Specify one or more modes with `-m` / `--mode`:
 

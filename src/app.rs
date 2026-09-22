@@ -102,17 +102,12 @@ pub fn run(mut args: Args) -> Result<()> {
         Subcommands::Edit { images } => workflow::edit_files(images, &args, &config),
         Subcommands::Annotate => workflow::screenshot(ScreenshotAction::Annotate, &args, &config),
         Subcommands::Ocr => workflow::screenshot(ScreenshotAction::Ocr, &args, &config),
-        Subcommands::Longshot => longshot::handle_longshot(&args, &config),
-        Subcommands::Stitch { input, output } => longshot::handle_stitch(
-            longshot::StitchRequest {
-                input: input.clone(),
-                output: output.clone(),
-                debug: args.debug,
-                silent,
-                notif_timeout,
-            },
-            &config,
-        ),
+        Subcommands::Longshot { edit } => longshot::handle_longshot(&args, &config, edit),
+        Subcommands::Stitch {
+            input,
+            output,
+            edit,
+        } => longshot::handle_stitch(input, output, edit, &args, &config),
         Subcommands::Record => record::handle_record(&args, &config),
         Subcommands::Now
         | Subcommands::Win

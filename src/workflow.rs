@@ -2,6 +2,7 @@
 //! Neither the editor nor process adapters own screen-selection lifecycle.
 
 use anyhow::Result;
+use hyshot_core::{ImageDocument, ImageSource};
 use hyshot_editor::{EditorInput, EditorOptions};
 use std::path::PathBuf;
 
@@ -40,7 +41,10 @@ pub fn screenshot(action: ScreenshotAction, args: &Args, config: &Config) -> Res
     let capture = SelectedCapture::acquire(args, config)?;
     let tool = match action {
         ScreenshotAction::Annotate if config.annotate.command.trim() == "builtin" => {
-            return edit(EditorInput::Png(capture.png), args, config);
+            let document =
+                ImageDocument::from_png(&capture.png, ImageSource::Capture(capture.geometry))?;
+            drop(capture.png);
+            return edit_document(document, args, config);
         }
         ScreenshotAction::Annotate => ExternalTool::Annotate(&config.annotate.command),
         ScreenshotAction::Ocr => ExternalTool::Ocr(&config.ocr.command),
@@ -59,6 +63,10 @@ pub fn screenshot(action: ScreenshotAction, args: &Args, config: &Config) -> Res
 
 pub fn edit_files(paths: Vec<PathBuf>, args: &Args, config: &Config) -> Result<()> {
     edit(EditorInput::Files(paths), args, config)
+}
+
+pub fn edit_document(document: ImageDocument, args: &Args, config: &Config) -> Result<()> {
+    edit(EditorInput::Document(document), args, config)
 }
 
 fn edit(input: EditorInput, args: &Args, config: &Config) -> Result<()> {

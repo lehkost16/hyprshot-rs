@@ -4,7 +4,6 @@ use notify_rust::Notification;
 use serde::{Deserialize, Serialize};
 use std::{
     fs,
-    io::Write,
     path::Path,
     process::{Command, Stdio},
 };
@@ -28,17 +27,10 @@ struct LongshotState {
     session: Session,
     video_path: String,
     output_path: String,
+    edit_on_finish: bool,
 }
 
-pub struct StitchRequest {
-    pub input: std::path::PathBuf,
-    pub output: Option<std::path::PathBuf>,
-    pub debug: bool,
-    pub silent: bool,
-    pub notif_timeout: u32,
-}
-
-pub fn handle_longshot(args: &Args, config: &config::Config) -> Result<()> {
+pub fn handle_longshot(args: &Args, config: &config::Config, edit: bool) -> Result<()> {
     let debug = args.debug;
     let silent = args.silent || !config.capture.notification;
     let notif_timeout = args
@@ -83,20 +75,9 @@ pub fn handle_longshot(args: &Args, config: &config::Config) -> Result<()> {
         );
 
         match stitch_res {
-            Ok(()) => {
-                // Copy to clipboard
-                if let Ok(png_bytes) = fs::read(&state.output_path) {
-                    let wl_copy_cmd = Command::new("wl-copy")
-                        .arg("--type")
-                        .arg("image/png")
-                        .stdin(Stdio::piped())
-                        .spawn();
-                    if let Ok(mut child) = wl_copy_cmd {
-                        if let Some(mut stdin) = child.stdin.take() {
-                            let _ = stdin.write_all(&png_bytes);
-                        }
-                        let _ = child.wait();
-                    }
+            Ok(image) => {
+                if let Err(error) = copy_png(Path::new(&state.output_path)) {
+                    eprintln!("Longshot saved, but clipboard copy failed: {error:#}");
                 }
 
                 // Send success notification
@@ -111,14 +92,25 @@ pub fn handle_longshot(args: &Args, config: &config::Config) -> Result<()> {
                 }
 
                 // Clean up temp video file
-                let _ = fs::remove_file(&state.video_path);
-                let _ = fs::remove_file(&state_file);
+                fs::remove_file(&state_file).with_context(|| {
+                    format!(
+                        "Image saved at {}, but completed session state could not be removed",
+                        state.output_path
+                    )
+                })?;
+                if let Err(error) = fs::remove_file(&state.video_path) {
+                    eprintln!("Cannot remove intermediate longshot recording: {error}");
+                }
 
                 if debug {
                     eprintln!(
                         "Longshot completed successfully. Stitched file: {}",
                         state.output_path
                     );
+                }
+                drop(_lock);
+                if state.edit_on_finish || edit {
+                    return edit_stitched(image, Path::new(&state.output_path), args, config);
                 }
             }
             Err(err) => {
@@ -212,6 +204,7 @@ pub fn handle_longshot(args: &Args, config: &config::Config) -> Result<()> {
             session,
             video_path,
             output_path: output_path.to_string_lossy().to_string(),
+            edit_on_finish: edit,
         };
         capture.commit(&state_file, &state)?;
 
@@ -230,14 +223,16 @@ pub fn handle_longshot(args: &Args, config: &config::Config) -> Result<()> {
 }
 
 /// Directly stitch an existing video file into a long screenshot.
-pub fn handle_stitch(request: StitchRequest, config: &config::Config) -> Result<()> {
-    let StitchRequest {
-        input,
-        output,
-        debug,
-        silent,
-        notif_timeout,
-    } = request;
+pub fn handle_stitch(
+    input: std::path::PathBuf,
+    output: Option<std::path::PathBuf>,
+    edit: bool,
+    args: &Args,
+    config: &config::Config,
+) -> Result<()> {
+    let debug = args.debug;
+    let silent = args.silent || !config.capture.notification;
+    let notif_timeout = crate::cli::resolve_notif_timeout(args, config);
 
     if !input.exists() {
         anyhow::bail!("Video file not found: {}", input.display());
@@ -261,21 +256,10 @@ pub fn handle_stitch(request: StitchRequest, config: &config::Config) -> Result<
             .show();
     }
 
-    stitcher::stitch_video(&input, &output_path, debug, config)?;
+    let image = stitcher::stitch_video(&input, &output_path, debug, config)?;
 
-    if let Ok(png_bytes) = std::fs::read(&output_path) {
-        let wl_copy_cmd = std::process::Command::new("wl-copy")
-            .arg("--type")
-            .arg("image/png")
-            .stdin(std::process::Stdio::piped())
-            .spawn();
-        if let Ok(mut child) = wl_copy_cmd {
-            use std::io::Write;
-            if let Some(mut stdin) = child.stdin.take() {
-                let _ = stdin.write_all(&png_bytes);
-            }
-            let _ = child.wait();
-        }
+    if let Err(error) = copy_png(&output_path) {
+        eprintln!("Longshot saved, but clipboard copy failed: {error:#}");
     }
 
     if !silent {
@@ -288,5 +272,36 @@ pub fn handle_stitch(request: StitchRequest, config: &config::Config) -> Result<
             .show();
     }
 
+    if edit {
+        edit_stitched(image, &output_path, args, config)?;
+    }
+    Ok(())
+}
+
+fn edit_stitched(
+    image: image::RgbImage,
+    path: &Path,
+    args: &Args,
+    config: &config::Config,
+) -> Result<()> {
+    let document = hyshot_core::ImageDocument::new(
+        image::DynamicImage::ImageRgb8(image).into_rgba8(),
+        hyshot_core::ImageSource::Stitched(path.to_owned()),
+    )?;
+    crate::workflow::edit_document(document, args, config).with_context(|| {
+        format!(
+            "Cannot open editor; stitched image is saved at {}",
+            path.display()
+        )
+    })
+}
+
+fn copy_png(path: &Path) -> Result<()> {
+    let status = Command::new("wl-copy")
+        .args(["--type", "image/png"])
+        .stdin(Stdio::from(fs::File::open(path)?))
+        .status()
+        .context("Cannot start clipboard copy")?;
+    anyhow::ensure!(status.success(), "wl-copy exited with {status}");
     Ok(())
 }

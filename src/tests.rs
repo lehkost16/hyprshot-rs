@@ -432,6 +432,27 @@ fn explicit_editor_preferences_roundtrip_without_style_memory() {
 }
 
 #[test]
+fn longshot_and_stitch_edit_flags_are_explicit() {
+    use clap::Parser;
+    let args = crate::cli::Args::try_parse_from(["hyshot", "longshot", "--edit"]).unwrap();
+    assert!(matches!(
+        args.subcommand,
+        Some(crate::cli::Subcommands::Longshot { edit: true })
+    ));
+    let args =
+        crate::cli::Args::try_parse_from(["hyshot", "stitch", "video.mp4", "--edit"]).unwrap();
+    assert!(matches!(
+        args.subcommand,
+        Some(crate::cli::Subcommands::Stitch { edit: true, .. })
+    ));
+    let args = crate::cli::Args::try_parse_from(["hyshot", "longshot"]).unwrap();
+    assert!(matches!(
+        args.subcommand,
+        Some(crate::cli::Subcommands::Longshot { edit: false })
+    ));
+}
+
+#[test]
 fn config_save_replaces_complete_document() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("nested/config.toml");

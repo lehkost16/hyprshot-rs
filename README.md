@@ -69,10 +69,13 @@ file picker with no paths), without taking another screenshot. The editor
 retains the toolbar expand/collapse control. Preferences now live in hyshot's
 `[editor]` section; `~/.config/annotator/config.toml` is not read or auto-migrated.
 Edited images follow hyshot's screenshot output-directory rules.
+Remembered tool colors and widths live separately in `editor-state.toml`; editing
+does not rewrite `config.toml`. `longshot --edit` and `stitch VIDEO --edit` open
+saved stitched results in the same editor, without an intermediate image decode.
 Existing external annotation commands remain supported.
 
 The editor is the `hyshot-editor` library in `crates/editor`, not a separately
-launched executable. Captured PNG data is passed in memory. Chinese fonts are
+launched executable. Original-pixel image documents are passed in memory. Chinese fonts are
 resolved at runtime with fontconfig (`fc-match`); install a CJK font on the target
 system. See [Architecture](doc/ARCHITECTURE.md) for module boundaries.
 

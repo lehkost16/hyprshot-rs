@@ -1,5 +1,5 @@
 use crate::annotator::ExtraZoomFactorSupport;
-use crate::platform::dpi::LogicalSize;
+use crate::platform::dpi::{LogicalSize, PhysicalSize};
 use crate::platform::gpu::GpuContext;
 use crate::ui::font::setup_chinese_fonts;
 use egui::{FullOutput, RawInput, Rect, pos2, vec2};
@@ -46,12 +46,13 @@ impl EguiOffScreenRender {
 
     pub fn render_egui_to_image(
         &self,
-        virtual_screen_size: LogicalSize<u32>,
+        physical_size: PhysicalSize<u32>,
         pixels_per_point: f32,
         extra_zoom_factor: f32,
         build_ui: BuildUI,
     ) -> Receiver<Arc<RgbaImage>> {
-        let physical_size = virtual_screen_size.to_physical(pixels_per_point as f64);
+        let virtual_screen_size: LogicalSize<f32> =
+            physical_size.to_logical(pixels_per_point as f64);
         let texture_size = Extent3d {
             width: physical_size.width,
             height: physical_size.height,
@@ -69,10 +70,7 @@ impl EguiOffScreenRender {
         let raw_input = RawInput {
             screen_rect: Some(Rect::from_min_size(
                 pos2(0., 0.),
-                vec2(
-                    virtual_screen_size.width as f32,
-                    virtual_screen_size.height as f32,
-                ),
+                vec2(virtual_screen_size.width, virtual_screen_size.height),
             )),
             ..Default::default()
         };
@@ -82,7 +80,6 @@ impl EguiOffScreenRender {
         // 将给定形状镶嵌成三角形网格
         let paint_jobs = egui_ctx.tessellate(full_output.shapes, pixels_per_point); // 通常由 run 内部处理，但也可手动
 
-        let physical_size = virtual_screen_size.to_physical(pixels_per_point as f64);
         let screen_descriptor = egui_wgpu::ScreenDescriptor {
             size_in_pixels: [physical_size.width, physical_size.height],
             pixels_per_point,
@@ -177,7 +174,7 @@ impl EguiOffScreenRender {
         let unpadded_bytes_per_row = texture_size.width * pixel_size;
         let padding = (align - unpadded_bytes_per_row % align) % align;
         let padded_bytes_per_row = unpadded_bytes_per_row + padding;
-        let buffer_size = (padded_bytes_per_row * texture_size.height) as wgpu::BufferAddress;
+        let buffer_size = u64::from(padded_bytes_per_row) * u64::from(texture_size.height);
 
         // 创建目标缓冲区，用于接收像素数据
         let buffer = device.create_buffer(&BufferDescriptor {
@@ -236,5 +233,99 @@ impl EguiOffScreenRender {
         } else {
             panic!("从 GPU 读取数据失败！");
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    #[ignore = "requires a working Vulkan/GLES adapter; run explicitly"]
+    fn offscreen_export_preserves_original_pixels_at_fractional_scale() {
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
+        let adapter = pollster::block_on(instance.request_adapter(&Default::default())).unwrap();
+        let (device, queue) =
+            pollster::block_on(adapter.request_device(&Default::default())).unwrap();
+        let renderer = EguiOffScreenRender {
+            device: Arc::new(device),
+            queue: Arc::new(queue),
+            texture_format: TextureFormat::Bgra8UnormSrgb,
+        };
+        for scale in [1.0, 1.25, 1.5, 2.0] {
+            let source = RgbaImage::from_fn(13, 7, |x, y| {
+                Rgba([(x * 19) as u8, (y * 37) as u8, 90, 255])
+            });
+            let input_image = source.clone();
+            let result = renderer.render_egui_to_image(
+                PhysicalSize::new(13, 7),
+                scale,
+                1.0,
+                Box::new(move |input, context| {
+                    context.run_ui(input, |ctx| {
+                        egui::CentralPanel::default()
+                            .frame(egui::Frame::new())
+                            .show(ctx, |ui| {
+                                let texture = ui.ctx().load_texture(
+                                    "test",
+                                    egui::ColorImage::from_rgba_unmultiplied(
+                                        [13, 7],
+                                        input_image.as_raw(),
+                                    ),
+                                    crate::texture::screenshot_texture_options(),
+                                );
+                                egui::Image::new(&texture).paint_at(
+                                    ui,
+                                    Rect::from_min_size(
+                                        pos2(0., 0.),
+                                        vec2(13. / scale, 7. / scale),
+                                    ),
+                                );
+                            });
+                    })
+                }),
+            );
+            let output = result.recv().unwrap();
+            assert_eq!(output.dimensions(), source.dimensions());
+            for (actual, expected) in output.as_raw().iter().zip(source.as_raw()) {
+                assert!(
+                    actual.abs_diff(*expected) <= 1,
+                    "pixel mismatch at scale {scale}: {actual} != {expected}"
+                );
+            }
+        }
+        use crate::annotator::rectangle_based::{RectangleAnnotation, RectangleStyle};
+        use crate::annotator::{ActivationSupport, Annotation, AnnotatorState};
+        let original = Arc::new(RgbaImage::from_pixel(101, 53, Rgba([10, 20, 30, 255])));
+        let mut state = AnnotatorState {
+            session: crate::config::EditorSession::new(Default::default()),
+            extra_zoom_factor: 0.25,
+            initial_zoom_factor: 0.25,
+            background_image: original.clone(),
+            background_texture_handle: None,
+            renderer: Arc::new(renderer),
+            annotation_tools: Default::default(),
+            annotations_stack: vec![],
+            redo_stack: vec![],
+            current_annotation_tool: None,
+            toolbar_visible: true,
+            marker_pen_straight_mode: true,
+            candidate_colors: vec![],
+        };
+        let untouched = state.take_screenshot(1.25).recv().unwrap();
+        assert!(Arc::ptr_eq(&untouched, &original));
+        state
+            .annotations_stack
+            .push(Annotation::Rectangle(RectangleAnnotation::new(
+                Rect::from_min_size(pos2(10., 10.), vec2(30., 15.)),
+                RectangleStyle::default(),
+                ActivationSupport::NotSupported,
+            )));
+        let zoomed_out = state.take_screenshot(1.25).recv().unwrap();
+        state.extra_zoom_factor = 2.0;
+        let zoomed_in = state.take_screenshot(1.25).recv().unwrap();
+        assert_eq!(zoomed_out.dimensions(), original.dimensions());
+        assert_eq!(zoomed_out, zoomed_in);
+        assert_ne!(zoomed_out, original);
     }
 }

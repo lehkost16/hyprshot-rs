@@ -647,7 +647,7 @@ pub fn stitch_video(
     output: &Path,
     debug: bool,
     config: &crate::config::Config,
-) -> Result<()> {
+) -> Result<image::RgbImage> {
     let image = stitch_to_image(video, debug, config)?;
     let parent = output
         .parent()
@@ -657,7 +657,7 @@ pub fn stitch_video(
     image.write_to(&mut temp, image::ImageFormat::Png)?;
     temp.persist_noclobber(output)
         .context("Cannot publish long screenshot; output must not already exist")?;
-    Ok(())
+    Ok(image)
 }
 
 #[cfg(test)]

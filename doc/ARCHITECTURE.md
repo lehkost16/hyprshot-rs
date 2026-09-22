@@ -6,7 +6,8 @@ Hyshot is one application with an internal editor library, not two executables.
 
 - `src/app.rs`: CLI/config dispatch and ordinary screenshot commands.
 - `src/workflow.rs`: selection/freeze/capture lifecycle and routing to editing
-  or OCR. Built-in editing receives PNG bytes without a temporary file.
+  or OCR. Built-in editing receives an original-pixel ImageDocument without a
+  temporary file; file and stitched-image entry points use the same contract.
 - `src/compositor.rs`: monitor metadata shared by recording, scrolling capture
   and external-command placeholders; no dependency on editor/OCR execution.
 - `src/external.rs`: explicitly configured external processes; temporary images
@@ -64,13 +65,28 @@ overflow are explicit errors; the source recording is retained for recovery.
 overrides are removed rather than used to guess dimensions after probe failure.
 Published longshot files must not already exist.
 
+`longshot --edit` remembers editor launch in its session; `stitch --edit` opens
+the completed image directly. Both publish the PNG before launching the editor,
+so an editor failure cannot lose the stitch result. Normal commands do not launch
+the editor. Multi-file editor input has a combined 256 MiB decoded RGBA budget.
+Images above the active GPU texture limit are rejected, never silently resized.
+These limits do not include GPU textures, render buffers or annotation history.
+Unannotated export returns original pixels; annotated export targets the original
+physical dimensions, independent of preview zoom and fractional-scale rounding.
+
 ```sh
 cargo fmt --all --check
 cargo test --workspace --offline
 cargo build --workspace --offline
+cargo test --offline synthetic_video_pipeline -- --ignored --nocapture
+cargo test -p hyshot-editor --offline offscreen_export -- --ignored --nocapture
 ```
 
 Tests cover input pixel preservation, settings serialization, atomic config
 writes, export destinations, startup cleanup and existing toolbar/scaling/
 stitching contracts. Multi-monitor interaction, clipboard ownership and real
 recording completion still require interactive Wayland verification.
+
+The explicit GPU test checks opaque pixel values at 1.0/1.25/1.5/2.0 output scales,
+unchanged-image zero-copy export, and identical annotated output at 25% and 200%
+preview zoom. It is not a compositor color-management or monitor-HDR test.

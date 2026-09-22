@@ -547,23 +547,26 @@ impl BackgroundImageProvider for BackgroundImageWithAnnotationsProvider {
         &self,
         annotator_state: &AnnotatorState,
         pixels_per_point: f32,
-        extra_zoom_factor: f32,
+        _extra_zoom_factor: f32,
     ) -> Receiver<Arc<RgbaImage>> {
         let original_background_image = annotator_state.background_image.clone();
         let annotations = annotator_state.annotations_stack.clone();
+
+        if annotations.is_empty() {
+            let (sender, receiver) = oneshot::channel();
+            let _ = sender.send(original_background_image);
+            return receiver;
+        }
 
         let physical_size = PhysicalSize::new(
             original_background_image.width(),
             original_background_image.height(),
         );
-        let logical_size = physical_size
-            .to_logical(pixels_per_point as f64)
-            .apply_extra_zoom_factor(extra_zoom_factor);
-
+        // Annotation coordinates are stored at zoom 1; preview zoom is never exported.
         self.renderer.render_egui_to_image(
-            logical_size,
+            physical_size,
             pixels_per_point,
-            extra_zoom_factor,
+            1.0,
             Box::new(move |input, context| {
                 let mut annotaions = annotations;
                 context.run_ui(input, move |ctx| {
@@ -572,7 +575,7 @@ impl BackgroundImageProvider for BackgroundImageWithAnnotationsProvider {
                         .show(ctx, |ui| {
                             // 创建 ColorImage
                             // 注意：RgbaImage 的 bytes 应该是连续的 RGBA 数据
-                            let background_image = Arc::new(ColorImage::from_rgba_premultiplied(
+                            let background_image = Arc::new(ColorImage::from_rgba_unmultiplied(
                                 [
                                     original_background_image.width() as usize,
                                     original_background_image.height() as usize,

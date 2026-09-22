@@ -17,7 +17,7 @@ pub struct Config {
     #[serde(default)]
     pub annotate: AnnotateConfig,
     #[serde(default)]
-    pub editor: hyshot_editor::EditorSettings,
+    pub editor: hyshot_editor::EditorPreferences,
     #[serde(default)]
     pub ocr: OcrConfig,
     #[serde(default)]
@@ -457,7 +457,7 @@ impl Default for Config {
             capture: CaptureConfig::default(),
             advanced: AdvancedConfig::default(),
             annotate: AnnotateConfig::default(),
-            editor: hyshot_editor::EditorSettings::default(),
+            editor: hyshot_editor::EditorPreferences::default(),
             ocr: OcrConfig::default(),
             longshot: LongshotConfig::default(),
             record: RecordConfig::default(),

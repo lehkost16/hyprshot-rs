@@ -18,16 +18,27 @@ auto_deactivate_tool_after_draw = false
 active_tool = "Rectangle"
 exit_after_copy = false
 exit_after_save = false
+```
 
-[editor.tool_settings.Pencil]
+Explicit preferences support `hyshot --set editor.exit_after_copy true` and are
+never rewritten by editor interaction. `active_tool` is the configured startup
+tool when `auto_activate_default_tool` is enabled, not the last selected tool.
+`marker_pen_straight_mode` is likewise the explicit startup preference.
+
+Remembered widths and RGBA colors are stored separately in
+`~/.config/hyshot/editor-state.toml` on normal editor exit:
+
+```toml
+[tool_settings.Pencil]
 stroke_width = 5.0
 stroke_color_rgba = [255, 69, 58, 255]
 ```
 
-Preferences are shared in memory and saved on normal editor exit. Simple fields
-also support `hyshot --set editor.exit_after_copy true`. `--no-config` uses
-defaults without writing preferences. Invalid TOML is an error, not a reason to
-silently replace preferences with defaults.
+Concurrent sessions merge changed tools under a file lock; for the same tool,
+the last saved style wins. No per-frame disk access. `--no-config` uses defaults
+without loading or writing style memory. Invalid TOML is an error. Old
+`[editor.tool_settings.*]` entries must be moved explicitly into the state file
+as `[tool_settings.*]`; they are not silently ignored or auto-migrated.
 
 Editor Save creates a new PNG in `--output-folder`, `HYSHOT_DIR`, or
 `paths.screenshots_dir`, in that order. The old editor `save_directory` is not

@@ -62,20 +62,24 @@ pub fn edit_files(paths: Vec<PathBuf>, args: &Args, config: &Config) -> Result<(
 }
 
 fn edit(input: EditorInput, args: &Args, config: &Config) -> Result<()> {
-    let settings = hyshot_editor::run(
+    let state_path = crate::editor_state::path()?;
+    let initial = if args.no_config {
+        Default::default()
+    } else {
+        crate::editor_state::load(&state_path)?
+    };
+    let state = hyshot_editor::run(
         input,
         EditorOptions {
-            settings: config.editor.clone(),
+            preferences: config.editor.clone(),
+            tool_state: initial.clone(),
             output_directory: get_screenshots_dir(args.output_folder.clone(), config, args.debug)?,
             notifications: !args.silent && config.capture.notification,
             notification_timeout: resolve_notif_timeout(args, config),
         },
     )?;
-    if !args.no_config && settings != config.editor {
-        // Reload so recording/capture changes made while editing are retained.
-        let mut current = Config::load()?;
-        current.editor = settings;
-        current.save()?;
+    if !args.no_config {
+        crate::editor_state::save_changes(&state_path, &initial, &state)?;
     }
     Ok(())
 }

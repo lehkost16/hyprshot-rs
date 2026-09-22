@@ -12,7 +12,58 @@ pub struct ToolSettings {
     pub font_color_rgba: Option<[u8; 4]>,
 }
 
-/// Editor preferences; storage and output policy belong to the host application.
+/// Explicit startup preferences, never changed by remembered tool selection.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct EditorPreferences {
+    pub marker_pen_straight_mode: bool,
+    pub auto_activate_default_tool: bool,
+    pub auto_deactivate_tool_after_draw: bool,
+    pub active_tool: String,
+    pub exit_after_copy: bool,
+    pub exit_after_save: bool,
+}
+
+impl Default for EditorPreferences {
+    fn default() -> Self {
+        Self {
+            marker_pen_straight_mode: true,
+            auto_activate_default_tool: false,
+            auto_deactivate_tool_after_draw: false,
+            active_tool: "Rectangle".into(),
+            exit_after_copy: false,
+            exit_after_save: false,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct EditorToolState {
+    pub tool_settings: BTreeMap<String, ToolSettings>,
+}
+
+impl EditorSettings {
+    pub fn from_parts(preferences: EditorPreferences, state: EditorToolState) -> Self {
+        Self {
+            marker_pen_straight_mode: preferences.marker_pen_straight_mode,
+            auto_activate_default_tool: preferences.auto_activate_default_tool,
+            auto_deactivate_tool_after_draw: preferences.auto_deactivate_tool_after_draw,
+            active_tool: preferences.active_tool,
+            exit_after_copy: preferences.exit_after_copy,
+            exit_after_save: preferences.exit_after_save,
+            tool_settings: state.tool_settings,
+        }
+    }
+
+    pub fn tool_state(self) -> EditorToolState {
+        EditorToolState {
+            tool_settings: self.tool_settings,
+        }
+    }
+}
+
+/// Runtime settings; storage and output policy belong to the host application.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct EditorSettings {
@@ -60,6 +111,22 @@ impl EditorSession {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn remembered_styles_do_not_override_explicit_startup_tool() {
+        let prefs = EditorPreferences {
+            active_tool: "Pencil".into(),
+            auto_activate_default_tool: true,
+            ..Default::default()
+        };
+        let mut runtime = EditorSettings::from_parts(prefs.clone(), EditorToolState::default());
+        runtime.active_tool = "Rectangle".into();
+        runtime.marker_pen_straight_mode = false;
+        let reopened = EditorSettings::from_parts(prefs, runtime.tool_state());
+        assert_eq!(reopened.active_tool, "Pencil");
+        assert!(reopened.auto_activate_default_tool);
+        assert!(reopened.marker_pen_straight_mode);
+    }
 
     #[test]
     fn windows_share_preferences_without_disk_io() {

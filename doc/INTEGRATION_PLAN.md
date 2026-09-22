@@ -16,7 +16,7 @@ is 4331db8; d91f0e6 preserves the experimental restructuring for comparison.
   limits, decoder failure handling and reproducible synthetic-video tests.
 - [x] 3. Recording session ownership; concurrent-toggle locking, process identity,
   finalizing/failure states and recoverable output handling.
-- [ ] 4. Separate explicit editor preferences from remembered tool styles. No
+- [x] 4. Separate explicit editor preferences from remembered tool styles. No
   implicit old-config migration. One host-owned state store and output policy.
 - [ ] 5. Feed captures, files and stitched images through the document contract;
   preserve toolbar UX and validate ordinary capture/editor/export workflows.

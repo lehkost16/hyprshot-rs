@@ -23,7 +23,7 @@ use anyhow::{Context, Result};
 use std::path::PathBuf;
 use std::sync::Arc;
 
-pub use config::{EditorSettings, ToolSettings};
+pub use config::{EditorPreferences, EditorToolState, ToolSettings};
 
 /// Input pixels never need to be written to a temporary file.
 pub enum EditorInput {
@@ -32,7 +32,8 @@ pub enum EditorInput {
 }
 
 pub struct EditorOptions {
-    pub settings: EditorSettings,
+    pub preferences: EditorPreferences,
+    pub tool_state: EditorToolState,
     pub output_directory: PathBuf,
     pub notifications: bool,
     pub notification_timeout: u32,
@@ -66,14 +67,17 @@ impl EditorInput {
     }
 }
 
-pub fn run(input: EditorInput, options: EditorOptions) -> Result<EditorSettings> {
+pub fn run(input: EditorInput, options: EditorOptions) -> Result<EditorToolState> {
     let images = input.decode()?;
 
     if images.is_empty() {
-        return Ok(options.settings);
+        return Ok(options.tool_state);
     }
 
-    let session = config::EditorSession::new(options.settings);
+    let session = config::EditorSession::new(config::EditorSettings::from_parts(
+        options.preferences,
+        options.tool_state,
+    ));
     let mut app = Application::new(
         "site.nullable.annotator",
         true,
@@ -111,7 +115,7 @@ pub fn run(input: EditorInput, options: EditorOptions) -> Result<EditorSettings>
     }
 
     app.run()?;
-    Ok(session.settings())
+    Ok(session.settings().tool_state())
 }
 
 #[cfg(test)]

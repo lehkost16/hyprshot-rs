@@ -8,6 +8,7 @@ mod cli;
 mod compositor;
 mod config;
 mod config_cmds;
+mod editor_state;
 mod freeze;
 mod geometry;
 mod workflow;

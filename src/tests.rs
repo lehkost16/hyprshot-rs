@@ -422,18 +422,10 @@ fn built_in_editor_cli_and_default() {
 }
 
 #[test]
-fn unified_editor_config_roundtrips_tool_styles() {
+fn explicit_editor_preferences_roundtrip_without_style_memory() {
     let mut config = crate::config::Config::default();
     config.editor.active_tool = "Pencil".into();
     config.editor.exit_after_save = true;
-    config.editor.tool_settings.insert(
-        "Pencil".into(),
-        hyshot_editor::ToolSettings {
-            stroke_width: Some(5.0),
-            stroke_color_rgba: Some([10, 20, 30, 112]),
-            ..Default::default()
-        },
-    );
     let serialized = toml::to_string_pretty(&config).unwrap();
     let decoded: crate::config::Config = toml::from_str(&serialized).unwrap();
     assert_eq!(decoded.editor, config.editor);

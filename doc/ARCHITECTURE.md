@@ -41,10 +41,11 @@ overwrite; conversion failures retain the source and session state.
 - `export.rs`: shared save/copy path for shortcuts and buttons; close only after
   success. `image_save.rs` creates collision-safe lossless PNG output.
 
-The editor returns preferences on normal exit. The host reloads the latest
-configuration, updates the typed editor section and saves. No per-frame disk
-access; `--no-config` does not save preferences. A crash before normal exit loses
-session changes. The old independent annotator config is not auto-migrated.
+The editor returns tool styles on normal exit. `src/editor_state.rs` merges changed
+styles into a separate editor-state.toml under a lock and atomically replaces it.
+Explicit config.toml preferences are not rewritten. No per-frame disk access;
+`--no-config` neither loads nor saves style memory. A crash before normal exit
+loses session changes. The old independent annotator config is not auto-migrated.
 
 The Wayland app ID remains `site.nullable.annotator` to retain compositor rules;
 this does not introduce a separate executable or configuration dependency.

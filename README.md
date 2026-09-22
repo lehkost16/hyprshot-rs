@@ -77,6 +77,13 @@ launched executable. Original-pixel image documents are passed in memory. Chines
 resolved at runtime with fontconfig (`fc-match`); install a CJK font on the target
 system. See [Architecture](doc/ARCHITECTURE.md) for module boundaries.
 
+The desktop launcher is `resources/site.nullable.annotator.desktop`. Its displayed
+name is Hyshot; opening images runs `hyshot edit %F`, while desktop actions expose
+annotation, scrolling capture and recording. The existing desktop ID and icon name
+are retained so image associations and compositor rules keep working. Install the
+current Hyshot binary before updating the launcher. No separate Annotator binary
+or Annotator configuration is used by this entry.
+
 ### Command Syntax
 ```bash
 hyshot [options ..] <command>

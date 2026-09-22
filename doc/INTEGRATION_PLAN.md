@@ -25,6 +25,8 @@ is 4331db8; d91f0e6 preserves the experimental restructuring for comparison.
 
 - [x] Real Wayland editor startup and rendered toolbar, with a generated 961x601
   fixture on the user's 2560x1600, 125% eDP-1 output. No installed binary changed.
+- [x] Ctrl+S through the live window produced a 961x601 PNG in the temporary
+  test directory; the window then closed normally with process exit code 0.
 - [ ] Mixed-scale/rotated-monitor region selection and recording border alignment.
 - [ ] Actual wl-screenrec stop, GIF finalization and clipboard ownership.
 - [ ] Interactive editor keyboard, toolbar toggle, save/copy and window movement.

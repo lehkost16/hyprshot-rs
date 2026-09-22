@@ -7,10 +7,11 @@ Minimal configuration reference aligned with actual behavior.
 The editor shares hyshot's config. It does not read or migrate
 `~/.config/annotator/config.toml`.
 
-```toml
-[annotate]
-command = "builtin"
+`annotate` always uses the built-in editor. The old `[annotate]` command section
+is no longer used and should be removed from existing configuration files.
+`[ocr].command` remains independently configurable for nbocr.
 
+```toml
 [editor]
 marker_pen_straight_mode = true
 auto_activate_default_tool = false

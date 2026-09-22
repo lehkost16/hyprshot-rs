@@ -125,11 +125,6 @@ fn set_config_value(config: &mut config::Config, key: &str, value: &str) -> Resu
                 .context("Value must be a number (milliseconds)")?;
         }
 
-        // [annotate] section
-        ("annotate", "command") => {
-            config.annotate.command = value.to_string();
-        }
-
         ("editor", field) => {
             let mut settings = toml::Value::try_from(&config.editor)?;
             let slot = settings
@@ -219,7 +214,6 @@ fn set_config_value(config: &mut config::Config, key: &str, value: &str) -> Resu
                    - advanced.freeze_on_external (true, false)\n\
                    - advanced.delay_ms (milliseconds)\n\
                   Annotate:\n\
-                    - annotate.command\n\
                   OCR:\n\
                     - ocr.command\n\
                  Longshot:\n\
@@ -648,7 +642,6 @@ fn configure_advanced(config: &mut config::Config) -> Result<()> {
 fn configure_tools(config: &mut config::Config) -> Result<()> {
     loop {
         let fields = &[
-            &format!("annotate command (current: {})", config.annotate.command),
             &format!("ocr command      (current: {})", config.ocr.command),
             "< Back to main menu",
         ];
@@ -662,19 +655,12 @@ fn configure_tools(config: &mut config::Config) -> Result<()> {
         match selection {
             0 => {
                 let input: String = Input::new()
-                    .with_prompt("Enter command for screenshot editing/annotation tool")
-                    .default(config.annotate.command.clone())
-                    .interact_text()?;
-                config.annotate.command = input;
-            }
-            1 => {
-                let input: String = Input::new()
                     .with_prompt("Enter command for OCR tool")
                     .default(config.ocr.command.clone())
                     .interact_text()?;
                 config.ocr.command = input;
             }
-            2 => break,
+            1 => break,
             _ => unreachable!(),
         }
     }
@@ -684,6 +670,14 @@ fn configure_tools(config: &mut config::Config) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn external_annotation_setting_is_removed_but_ocr_remains_configurable() {
+        let mut config = config::Config::default();
+        assert!(set_config_value(&mut config, "annotate.command", "external-editor").is_err());
+        set_config_value(&mut config, "ocr.command", "nbocr recognize {path}").unwrap();
+        assert_eq!(config.ocr.command, "nbocr recognize {path}");
+    }
 
     #[test]
     fn editor_settings_use_existing_config_command() {

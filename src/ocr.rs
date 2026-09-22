@@ -6,12 +6,7 @@ use tempfile::Builder;
 
 use crate::geometry::Geometry;
 
-pub enum ExternalTool<'a> {
-    Annotate(&'a str),
-    Ocr(&'a str),
-}
-
-pub struct ExternalOptions {
+pub struct OcrOptions {
     pub debug: bool,
     pub silent: bool,
     pub notification_timeout: u32,
@@ -19,19 +14,15 @@ pub struct ExternalOptions {
 
 /// The process adapter owns temporary files, never selection or screen capture.
 pub fn run(
-    tool: ExternalTool<'_>,
+    template: &str,
     image_bytes: &[u8],
     geometry: Geometry,
-    options: ExternalOptions,
+    options: OcrOptions,
 ) -> Result<()> {
-    let (template, is_ocr) = match tool {
-        ExternalTool::Annotate(command) => (command, false),
-        ExternalTool::Ocr(command) => (command, true),
-    };
     let debug = options.debug;
     let silent = options.silent;
     let notif_timeout = options.notification_timeout;
-    // 4. Save PNG to a unique temp file in /tmp/
+    // Keep the temporary image alive until OCR finishes.
     let mut temp_file = Builder::new()
         .prefix("shot_temp_")
         .suffix(".png")
@@ -44,10 +35,8 @@ pub fn run(
     let temp_path = temp_file.path().to_path_buf();
     let temp_path_str = temp_path.to_string_lossy().to_string();
 
-    // 5. Build external command by replacing placeholders
-    let cmd_template = template;
-
-    let mut cmd_str = cmd_template.to_owned();
+    // Build the configured OCR command.
+    let mut cmd_str = template.to_owned();
     if cmd_str.contains("{}") {
         cmd_str = cmd_str.replace("{}", &temp_path_str);
     } else if cmd_str.contains("{path}") {
@@ -80,88 +69,66 @@ pub fn run(
         eprintln!("Running command: {}", cmd_str);
     }
 
-    // Parse the command string to executable and args
-    let status_res = if is_ocr {
-        // OCR mode: capture stdout
-        let output = Command::new("sh")
-            .arg("-c")
-            .arg(&cmd_str)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .output()
-            .context("Failed to run OCR command")?;
+    // OCR mode: capture stdout
+    let output = Command::new("sh")
+        .arg("-c")
+        .arg(&cmd_str)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .context("Failed to run OCR command")?;
 
-        let ocr_stdout = String::from_utf8_lossy(&output.stdout);
-        let ocr_stderr = String::from_utf8_lossy(&output.stderr);
-        anyhow::ensure!(
-            output.status.success(),
-            "OCR command failed ({}): {}",
-            output.status,
-            ocr_stderr.trim()
-        );
-        if debug {
-            eprintln!("OCR stdout: {}", ocr_stdout);
-            eprintln!("OCR stderr: {}", ocr_stderr);
-        }
+    let ocr_stdout = String::from_utf8_lossy(&output.stdout);
+    let ocr_stderr = String::from_utf8_lossy(&output.stderr);
+    anyhow::ensure!(
+        output.status.success(),
+        "OCR command failed ({}): {}",
+        output.status,
+        ocr_stderr.trim()
+    );
+    if debug {
+        eprintln!("OCR stdout: {}", ocr_stdout);
+        eprintln!("OCR stderr: {}", ocr_stderr);
+    }
 
-        // Parse and clean OCR text
-        let cleaned_txt = clean_ocr_text(&ocr_stdout);
+    // Parse and clean OCR text
+    let cleaned_txt = clean_ocr_text(&ocr_stdout);
 
-        if !cleaned_txt.is_empty() {
-            // Copy to clipboard
-            let mut wl_copy = Command::new("wl-copy")
-                .stdin(Stdio::piped())
-                .spawn()
-                .context("Failed to start wl-copy")?;
-            let written = wl_copy
-                .stdin
-                .take()
-                .context("Missing wl-copy stdin")?
-                .write_all(cleaned_txt.as_bytes());
-            let status = wl_copy.wait().context("Failed waiting for wl-copy")?;
-            written.context("Failed to write to wl-copy")?;
-            anyhow::ensure!(status.success(), "wl-copy exited with {status}");
-
-            // Send notification
-            if !silent {
-                let _ = Notification::new()
-                    .summary("OCR完成")
-                    .body(&cleaned_txt)
-                    .timeout(notif_timeout as i32)
-                    .appname("Shot")
-                    .show();
-            }
-        } else {
-            if !silent {
-                let _ = Notification::new()
-                    .summary("OCR完成")
-                    .body("未识别出文字")
-                    .timeout(notif_timeout as i32)
-                    .appname("Shot")
-                    .show();
-            }
-        }
-        Ok(())
-    } else {
-        // Edit mode: inherit stdio so UI works
-        let mut child = Command::new("sh")
-            .arg("-c")
-            .arg(&cmd_str)
+    if !cleaned_txt.is_empty() {
+        // Copy to clipboard
+        let mut wl_copy = Command::new("wl-copy")
+            .stdin(Stdio::piped())
             .spawn()
-            .context("Failed to run Edit command")?;
+            .context("Failed to start wl-copy")?;
+        let written = wl_copy
+            .stdin
+            .take()
+            .context("Missing wl-copy stdin")?
+            .write_all(cleaned_txt.as_bytes());
+        let status = wl_copy.wait().context("Failed waiting for wl-copy")?;
+        written.context("Failed to write to wl-copy")?;
+        anyhow::ensure!(status.success(), "wl-copy exited with {status}");
 
-        let status = child.wait().context("Failed waiting for Edit process")?;
-        if status.success() {
-            Ok(())
-        } else {
-            Err(anyhow::anyhow!("Edit process exited with error status"))
+        // Send notification
+        if !silent {
+            let _ = Notification::new()
+                .summary("OCR完成")
+                .body(&cleaned_txt)
+                .timeout(notif_timeout as i32)
+                .appname("Shot")
+                .show();
         }
-    };
-
-    // Cleanup temp file
-    drop(temp_file);
-
-    status_res
+    } else {
+        if !silent {
+            let _ = Notification::new()
+                .summary("OCR完成")
+                .body("未识别出文字")
+                .timeout(notif_timeout as i32)
+                .appname("Shot")
+                .show();
+        }
+    }
+    Ok(())
 }
 
 fn clean_ocr_text(input: &str) -> String {
@@ -228,8 +195,8 @@ fn clean_ocr_text(input: &str) -> String {
 mod tests {
     use super::*;
 
-    fn options() -> ExternalOptions {
-        ExternalOptions {
+    fn options() -> OcrOptions {
+        OcrOptions {
             debug: false,
             silent: true,
             notification_timeout: 1000,
@@ -240,7 +207,7 @@ mod tests {
     fn failed_ocr_does_not_treat_stdout_as_success() {
         let geometry = Geometry::new(0, 0, 10, 10).unwrap();
         let error = run(
-            ExternalTool::Ocr("printf 'recognized text'; exit 9 # {path}"),
+            "printf 'recognized text'; exit 9 # {path}",
             b"png",
             geometry,
             options(),
@@ -250,14 +217,8 @@ mod tests {
     }
 
     #[test]
-    fn external_editor_receives_live_temporary_file() {
+    fn ocr_receives_live_temporary_file() {
         let geometry = Geometry::new(0, 0, 10, 10).unwrap();
-        run(
-            ExternalTool::Annotate("test -s {path}"),
-            b"png",
-            geometry,
-            options(),
-        )
-        .unwrap();
+        run("test -s {path}", b"png", geometry, options()).unwrap();
     }
 }

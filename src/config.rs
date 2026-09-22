@@ -15,8 +15,6 @@ pub struct Config {
     #[serde(default)]
     pub advanced: AdvancedConfig,
     #[serde(default)]
-    pub annotate: AnnotateConfig,
-    #[serde(default)]
     pub editor: hyshot_editor::EditorPreferences,
     #[serde(default)]
     pub ocr: OcrConfig,
@@ -93,14 +91,6 @@ pub struct AdvancedConfig {
     pub delay_ms: u32,
 }
 
-/// Configuration for screenshot editing/annotation tool
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct AnnotateConfig {
-    /// Command to edit/annotate screenshot
-    #[serde(default = "default_annotate_command")]
-    pub command: String,
-}
-
 /// Configuration for OCR tool
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct OcrConfig {
@@ -136,10 +126,6 @@ pub struct LongshotConfig {
 // Default value functions for serde
 fn default_upload_command() -> String {
     "".to_string()
-}
-
-fn default_annotate_command() -> String {
-    "builtin".to_string()
 }
 
 fn default_ocr_command() -> String {
@@ -433,14 +419,6 @@ impl Default for AdvancedConfig {
     }
 }
 
-impl Default for AnnotateConfig {
-    fn default() -> Self {
-        Self {
-            command: default_annotate_command(),
-        }
-    }
-}
-
 impl Default for OcrConfig {
     fn default() -> Self {
         Self {
@@ -456,7 +434,6 @@ impl Default for Config {
             paths: PathsConfig::default(),
             capture: CaptureConfig::default(),
             advanced: AdvancedConfig::default(),
-            annotate: AnnotateConfig::default(),
             editor: hyshot_editor::EditorPreferences::default(),
             ocr: OcrConfig::default(),
             longshot: LongshotConfig::default(),
@@ -758,8 +735,8 @@ impl Config {
                 result.push_str("# Command to upload screenshots (e.g. \"curl -F 'file=@{path}' https://tmp.link/\")\n");
             } else if line.starts_with("[advanced]") {
                 result.push_str("\n# Advanced settings\n");
-            } else if line.starts_with("[annotate]") {
-                result.push_str("\n# Annotation tool settings\n");
+            } else if line.starts_with("[editor]") {
+                result.push_str("\n# Built-in editor preferences\n");
             } else if line.starts_with("[ocr]") {
                 result.push_str("\n# OCR tool settings\n");
             } else if line.starts_with("[longshot]") {

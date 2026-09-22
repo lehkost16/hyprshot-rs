@@ -418,7 +418,12 @@ fn built_in_editor_cli_and_default() {
         }
         _ => panic!("expected edit command"),
     }
-    assert_eq!(crate::config::Config::default().annotate.command, "builtin");
+    assert!(
+        toml::to_string(&crate::config::Config::default())
+            .unwrap()
+            .find("[annotate]")
+            .is_none()
+    );
 }
 
 #[test]

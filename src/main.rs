@@ -13,8 +13,8 @@ mod freeze;
 mod geometry;
 mod workflow;
 
-mod external;
 mod longshot;
+mod ocr;
 mod record;
 mod save;
 mod selector;

@@ -8,8 +8,8 @@ use std::path::PathBuf;
 
 use crate::cli::{Args, resolve_notif_timeout};
 use crate::config::{Config, get_screenshots_dir};
-use crate::external::{self, ExternalOptions, ExternalTool};
 use crate::geometry::Geometry;
+use crate::ocr::{self, OcrOptions};
 
 pub enum ScreenshotAction {
     Annotate,
@@ -39,21 +39,20 @@ impl SelectedCapture {
 
 pub fn screenshot(action: ScreenshotAction, args: &Args, config: &Config) -> Result<()> {
     let capture = SelectedCapture::acquire(args, config)?;
-    let tool = match action {
-        ScreenshotAction::Annotate if config.annotate.command.trim() == "builtin" => {
+    match action {
+        ScreenshotAction::Annotate => {
             let document =
                 ImageDocument::from_png(&capture.png, ImageSource::Capture(capture.geometry))?;
             drop(capture.png);
             return edit_document(document, args, config);
         }
-        ScreenshotAction::Annotate => ExternalTool::Annotate(&config.annotate.command),
-        ScreenshotAction::Ocr => ExternalTool::Ocr(&config.ocr.command),
-    };
-    external::run(
-        tool,
+        ScreenshotAction::Ocr => {}
+    }
+    ocr::run(
+        &config.ocr.command,
         &capture.png,
         capture.geometry,
-        ExternalOptions {
+        OcrOptions {
             debug: args.debug,
             silent: args.silent || !config.capture.notification,
             notification_timeout: resolve_notif_timeout(args, config),

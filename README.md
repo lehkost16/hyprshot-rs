@@ -16,7 +16,7 @@ Unlike original projects that use shell wrappers, `hyshot` compiles to a single 
   - `hyshot now` — Capture the current active monitor
   - `hyshot win` — Capture the active or a selected window (via compositor tree traversal)
   - `hyshot area` — Capture a selected screen region
-  - `hyshot annotate` — Capture a selected region and open it immediately using the configured annotation tool
+  - `hyshot annotate` — Capture a selected region and open it immediately in the built-in editor
   - `hyshot ocr` — Capture a selected region and perform OCR text recognition
   - `hyshot in5` / `hyshot in10` — Capture the active monitor after a 5 or 10-second countdown delay
 - **Scrolling Screenshot (Longshot)**
@@ -33,7 +33,7 @@ Unlike original projects that use shell wrappers, `hyshot` compiles to a single 
   - Use `--clipboard-only` to copy directly to the clipboard instead of writing to disk
 - **Configuration System**
   - TOML-based configuration (`~/.config/hyshot/config.toml`)
-  - Persistent settings for paths, notifications, annotate/ocr commands, longshot, and recording configurations
+  - Persistent settings for paths, notifications, OCR commands, longshot, and recording configurations
 
 ## Installation
 
@@ -58,13 +58,11 @@ Build with the repository's nightly Rust toolchain:
 
 ```bash
 cargo build --release
-hyshot --set annotate.command builtin
 hyshot annotate
 hyshot edit /path/to/image.png
 ```
 
-`hyshot annotate` captures a region and opens the built-in editor when
-`annotate.command = "builtin"`. `hyshot edit` opens existing images (or a
+`hyshot annotate` always captures a region and opens the built-in editor. `hyshot edit` opens existing images (or a
 file picker with no paths), without taking another screenshot. The editor
 retains the toolbar expand/collapse control. Preferences now live in hyshot's
 `[editor]` section; `~/.config/annotator/config.toml` is not read or auto-migrated.
@@ -72,7 +70,7 @@ Edited images follow hyshot's screenshot output-directory rules.
 Remembered tool colors and widths live separately in `editor-state.toml`; editing
 does not rewrite `config.toml`. `longshot --edit` and `stitch VIDEO --edit` open
 saved stitched results in the same editor, without an intermediate image decode.
-Existing external annotation commands remain supported.
+External annotation commands are not supported; OCR remains an independent process.
 
 The editor is the `hyshot-editor` library in `crates/editor`, not a separately
 launched executable. Original-pixel image documents are passed in memory. Chinese fonts are
@@ -198,10 +196,6 @@ Here is a complete list of all available configuration sections and options:
   * *Default:* `false`
 * **`delay_ms`** (integer) — Global delay before capturing in milliseconds.
   * *Default:* `0`
-
-#### `[annotate]`
-* **`command`** (string) — `builtin` selects the integrated editor. Other values explicitly select an external command, with `{path}` replaced by the screenshot path.
-  * *Default:* `"builtin"` opens the integrated annotator. Existing custom commands remain supported.
 
 #### `[ocr]`
 * **`command`** (string) — External OCR execution command used when running `hyshot ocr`. `{path}` is replaced with the screenshot path.

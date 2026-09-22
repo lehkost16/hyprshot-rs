@@ -10,7 +10,7 @@ Hyshot is one application with an internal editor library, not two executables.
   temporary file; file and stitched-image entry points use the same contract.
 - `src/compositor.rs`: monitor metadata shared by recording, scrolling capture
   and external-command placeholders; no dependency on editor/OCR execution.
-- `src/external.rs`: explicitly configured external processes; temporary images
+- `src/ocr.rs`: the explicitly configured OCR process; temporary images
   remain alive until their commands finish. Failed OCR never copies stdout.
 - `src/capture_session.rs`: recorder/overlay startup, atomic state publication,
   startup rollback and bounded graceful stop. A stop timeout retains state and

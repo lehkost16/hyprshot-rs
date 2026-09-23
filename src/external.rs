@@ -95,6 +95,10 @@ pub fn run(
     let cleaned_txt = clean_ocr_text(&ocr_stdout);
 
     if !cleaned_txt.is_empty() {
+        // Keep terminal invocations useful while the notification and clipboard
+        // remain the feedback path for Hyprland key bindings.
+        println!("{cleaned_txt}");
+
         // Copy to clipboard
         let mut wl_copy = Command::new("wl-copy")
             .stdin(Stdio::piped())

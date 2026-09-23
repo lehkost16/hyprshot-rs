@@ -78,7 +78,13 @@ fn set_config_value(config: &mut config::Config, key: &str, value: &str) -> Resu
     let parts: Vec<&str> = key.split('.').collect();
 
     if parts.len() == 3 && parts[0] == "external" {
-        let tool = config.external.entry(parts[1].to_string()).or_insert_with(|| config::ExternalToolConfig { command: String::new(), freeze: false });
+        let tool = config
+            .external
+            .entry(parts[1].to_string())
+            .or_insert_with(|| config::ExternalToolConfig {
+                command: String::new(),
+                freeze: false,
+            });
         match parts[2] {
             "command" => tool.command = value.to_string(),
             "freeze" => tool.freeze = value.parse().context("Value must be 'true' or 'false'")?,
@@ -217,9 +223,9 @@ fn set_config_value(config: &mut config::Config, key: &str, value: &str) -> Resu
                    - advanced.freeze_on_area (true, false)\n\
                    - advanced.freeze_on_annotate (true, false)\n\
                    - advanced.delay_ms (milliseconds)\n\
-                  Annotate:\n\
-                  OCR:\n\
-                    - ocr.command\n\
+                  External tools:\n\
+                    - external.<name>.command\n\
+                    - external.<name>.freeze (true, false)\n\
                  Longshot:\n\
                    - longshot.fps (integer)\n\
                    - longshot.sad_threshold (float)\n\
@@ -261,8 +267,8 @@ bind = ALT, Print, exec, hyshot win
 bind = SHIFT, Print, exec, hyshot area
 # Capture region and open in annotation tool
 bind = SUPER, Print, exec, hyshot annotate
-# Capture region and perform OCR text recognition
-bind = SUPER SHIFT, Print, exec, hyshot ocr
+# Capture region and run the configured OCR tool
+bind = SUPER SHIFT, Print, exec, hyshot external ocr
 
 # --- Delay Binds ---
 # Capture monitor after 5 seconds delay
@@ -643,8 +649,18 @@ fn configure_advanced(config: &mut config::Config) -> Result<()> {
     Ok(())
 }
 
-fn configure_tools(_config: &mut config::Config) -> Result<()> {
-    println!("Configure external tools in [external.<name>] or with --set external.<name>.command.");
+fn configure_tools(config: &mut config::Config) -> Result<()> {
+    println!("External tools receive a temporary PNG through {{path}}.");
+    if config.external.is_empty() {
+        println!("No external tools are configured.");
+    } else {
+        for (name, tool) in &config.external {
+            println!("- {name}: freeze={}, command={}", tool.freeze, tool.command);
+        }
+    }
+    println!(
+        "Use --set external.<name>.command <command> and --set external.<name>.freeze <true|false> to update them."
+    );
     Ok(())
 }
 
@@ -656,7 +672,12 @@ mod tests {
     fn external_commands_are_configurable_by_name() {
         let mut config = config::Config::default();
         assert!(set_config_value(&mut config, "annotate.command", "external-editor").is_err());
-        set_config_value(&mut config, "external.ocr.command", "nbocr recognize {path}").unwrap();
+        set_config_value(
+            &mut config,
+            "external.ocr.command",
+            "nbocr recognize {path}",
+        )
+        .unwrap();
         assert_eq!(config.external["ocr"].command, "nbocr recognize {path}");
     }
 

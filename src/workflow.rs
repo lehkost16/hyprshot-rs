@@ -8,8 +8,8 @@ use std::path::PathBuf;
 
 use crate::cli::{Args, resolve_notif_timeout};
 use crate::config::{Config, get_screenshots_dir};
-use crate::geometry::Geometry;
 use crate::external::{self, ExternalOptions};
+use crate::geometry::Geometry;
 
 #[derive(Clone, Copy)]
 pub enum ScreenshotAction {
@@ -54,7 +54,10 @@ pub fn screenshot(action: ScreenshotAction, args: &Args, config: &Config) -> Res
 }
 
 pub fn external(name: String, args: &Args, config: &Config) -> Result<()> {
-    let tool = config.external.get(&name).ok_or_else(|| anyhow::anyhow!("Unknown external tool '{name}'"))?;
+    let tool = config
+        .external
+        .get(&name)
+        .ok_or_else(|| anyhow::anyhow!("Unknown external tool '{name}'"))?;
     let capture = SelectedCapture::acquire(args, tool.freeze)?;
     external::run(
         &tool.command,

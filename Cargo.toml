@@ -2,15 +2,15 @@
 name = "hyshot"
 version = "0.1.9"
 edition = "2024"
-authors = ["vremyavnikuda <vremyavnikuda@protonmail.com>"]
-description = "A utility to easily take screenshots in Wayland using your mouse"
+authors = ["shiyuqi <shiyuqi@xiaoyingai.com>"]
+description = "Integrated Wayland screenshot, annotation, longshot, recording, OCR, and translation tool"
 license = "GPL-3.0"
 repository = "https://github.com/shikoucore/hyshot"
 homepage = "https://github.com/shikoucore/hyshot"
 keywords = ["hyprland", "screenshot", "wayland", "cli"]
 categories = ["command-line-utilities", "graphics"]
 readme = "README.md"
-include = ["src/**", "Cargo.toml", "Cargo.lock", "rust-toolchain.toml", "README.md", "LICENSE*"]
+include = ["src/**", "crates/**", "resources/**", "Cargo.toml", "Cargo.lock", "rust-toolchain.toml", "README.md", "NOTICE.md", "LICENSE*"]
 
 [workspace]
 members = ["crates/core", "crates/editor"]

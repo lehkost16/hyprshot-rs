@@ -1,236 +1,142 @@
----
+# Hyshot
 
-# Hyshot (hyshot)
+Hyshot is a GPL-3.0 Wayland capture tool maintained by shiyuqi. It combines
+screenshots, a built-in image editor, scrolling screenshots, region recording,
+OCR, and configurable external tools in one native Rust application for
+Hyprland and Sway.
 
-<p align="center">
-  <img src="img/logo.svg" alt="Hyshot logo" width="200" />
-</p>
-
-A modern, fast, and feature-rich screenshot and screen recording utility for Wayland (highly optimized for Hyprland and Sway), written in pure Rust.
-
-Unlike original projects that use shell wrappers, `hyshot` compiles to a single native binary, providing instant execution, region freezing, scroll stitching, and screen recording capabilities.
+This project is a derivative work of `hyprshot-rs` and `annotator`. Their
+copyright notices and GPL-3.0 terms are preserved; see [NOTICE.md](NOTICE.md).
 
 ## Features
 
-- **Screenshot Capture**
-  - `hyshot now` — Capture the current active monitor
-  - `hyshot win` — Capture the active or a selected window (via compositor tree traversal)
-  - `hyshot area` — Capture a selected screen region
-  - `hyshot annotate` — Capture a selected region and open it immediately in the built-in editor
-  - `hyshot ocr` — Capture a selected region and perform OCR text recognition
-  - `hyshot in5` / `hyshot in10` — Capture the active monitor after a 5 or 10-second countdown delay
-- **Scrolling Screenshot (Longshot)**
-  - `hyshot longshot` — Toggle start/stop to capture a region and vertically stitch scrolled content into a single long image
-  - Uses a lower frame-rate recording tuned for scrolling, then stitches sampled frames into one image
-- **Region Screen Recording (Record)**
-  - `hyshot record` — Toggle start/stop to record a selected region to WebM, MP4, GIF, or MKV
-  - A flashing neon-red selection overlay is automatically displayed to mark the recording area
-  - Automatically copies the saved video path to the clipboard on completion
-- **Screen Freezing**
-  - Smooth interactive selection over a frozen desktop state (enabled by default, can be toggled via config)
-- **Save & Clipboard**
-  - Saves captures to your configured screenshots directory (defaults to `~/Pictures` for images, `~/Videos/record` for recordings)
-  - Use `--clipboard-only` to copy directly to the clipboard instead of writing to disk
-- **Configuration System**
-  - TOML-based configuration (`~/.config/hyshot/config.toml`)
-  - Persistent settings for paths, notifications, OCR commands, longshot, and recording configurations
+- Capture an output, window, or selected region.
+- Edit captures and existing images in the built-in Hyshot editor.
+- Create scrolling screenshots by recording and stitching a selected region.
+- Record a selected region to MP4, WebM, MKV, or GIF.
+- Run configurable external tools on a selected PNG, including OCR and
+  translation.
+- Keep capture, editor, recording, and external-tool settings in
+  `~/.config/hyshot/config.toml`.
 
-## Installation
+## Runtime Dependencies
 
+- A Wayland compositor, tested with Hyprland and Sway.
+- `wl-clipboard` for clipboard operations.
+- `wl-screenrec` and `ffmpeg` for recording and long screenshots.
+- `nbocr` only when configuring OCR.
+- Translate Shell (`trans`) only when configuring translation.
 
-```
+## Build
 
-### Runtime Dependencies
-**Required:**
-- `wl-clipboard` — for clipboard operations
-- A Wayland compositor (Hyprland or Sway)
-
-**For Record / Longshot:**
-- `wl-screenrec` — required to capture screen feeds for recording and stitching
-
----
-
-## Usage
-
-### Integrated annotation
-
-Build with the repository's nightly Rust toolchain:
+Use the repository toolchain:
 
 ```bash
 cargo build --release
-hyshot annotate
-hyshot edit /path/to/image.png
+install -m 755 target/release/hyshot ~/.local/bin/hyshot
 ```
 
-`hyshot annotate` always captures a region and opens the built-in editor. `hyshot edit` opens existing images (or a
-file picker with no paths), without taking another screenshot. The editor
-retains the toolbar expand/collapse control. Preferences now live in hyshot's
-`[editor]` section; `~/.config/annotator/config.toml` is not read or auto-migrated.
-Edited images follow hyshot's screenshot output-directory rules.
-Remembered tool colors and widths live separately in `editor-state.toml`; editing
-does not rewrite `config.toml`. `longshot --edit` and `stitch VIDEO --edit` open
-saved stitched results in the same editor, without an intermediate image decode.
-External annotation commands are not supported; OCR remains an independent process.
+## Commands
 
-The editor is the `hyshot-editor` library in `crates/editor`, not a separately
-launched executable. Original-pixel image documents are passed in memory. Chinese fonts are
-resolved at runtime with fontconfig (`fc-match`); install a CJK font on the target
-system. See [Architecture](doc/ARCHITECTURE.md) for module boundaries.
-
-The desktop launcher is `resources/site.nullable.annotator.desktop`. Its displayed
-name is Hyshot; its only entry opens images with `hyshot edit %F`.
-Screenshot and recording commands remain available through the CLI and keybindings.
-The existing desktop ID and icon name
-are retained so image associations and compositor rules keep working. Install the
-current Hyshot binary before updating the launcher. No separate Annotator binary
-or Annotator configuration is used by this entry.
-
-### Command Syntax
 ```bash
-hyshot [options ..] <command>
+hyshot now                         # Active output
+hyshot win                         # Active or selected window
+hyshot area                        # Selected region
+hyshot annotate                    # Selected region in the built-in editor
+hyshot edit image.png              # Open an existing image in the editor
+hyshot longshot                    # Start/stop scrolling screenshot capture
+hyshot longshot --edit             # Open the completed long screenshot
+hyshot record                      # Start/stop region recording
+hyshot external ocr                # Run configured OCR on a selected region
+hyshot external translate          # Run configured translation on a region
 ```
 
-### Subcommands
-
-- Capture the active monitor:
-  ```bash
-  hyshot now
-  ```
-
-- Capture a window:
-  ```bash
-  hyshot win
-  ```
-
-- Capture a custom region:
-  ```bash
-  hyshot area
-  ```
-
-- Capture a region and open in annotation tool:
-  ```bash
-  hyshot annotate
-  ```
-
-- Capture a region and perform OCR:
-  ```bash
-  hyshot ocr
-  ```
-
-- Scrolling Screenshot (Longshot):
-  Start capture:
-  ```bash
-  hyshot longshot
-  ```
-  Scroll down the target window/page, then run the command again to stop and save the stitched PNG:
-  ```bash
-  hyshot longshot
-  ```
-
-- Region Screen Recording (Record):
-  Start recording:
-  ```bash
-  hyshot record
-  ```
-  Perform your actions, then run the command again to stop. The WebM video will be saved in `~/Videos/record/` and its path will be copied to your clipboard:
-  ```bash
-  hyshot record
-  ```
-
----
+`annotate` captures once and transfers original pixels to the built-in editor.
+`edit` opens an existing image and never captures the desktop. The desktop entry
+opens images with `hyshot edit %F`; no separate Annotator binary or configuration
+is required.
 
 ## Configuration
 
-The configuration file is located at `~/.config/hyshot/config.toml`. You can initialize a default configuration, display the current configuration, or edit values.
+Hyshot reads `~/.config/hyshot/config.toml`.
 
-### Commands
+```bash
+hyshot --init-config
+hyshot --show-config
+hyshot --interactive
+hyshot --set paths.screenshots_dir ~/Pictures/Screenshots
+hyshot --set record.fps 60
+hyshot --set external.ocr.freeze false
+```
 
-- **Initialize default configuration**:
-  ```bash
-  hyshot --init-config
-  ```
+### Capture and editor
 
-- **Show current configuration**:
-  ```bash
-  hyshot --show-config
-  ```
+```toml
+[capture]
+notification = true
+save_file = false
+file_type = "png"
+png_level = 6
 
-- **Launch interactive configuration menu**:
-  ```bash
-  hyshot -i
-  # or
-  hyshot --interactive
-  ```
+[advanced]
+freeze_on_area = true
+freeze_on_annotate = false
 
-- **Set a configuration value**:
-  ```bash
-  hyshot --set <key> <value>
-  ```
-  Example:
-  ```bash
-  hyshot --set paths.screenshots_dir ~/Pictures/Screenshots
-  hyshot --set capture.jpeg_quality 95
-  hyshot --set record.fps 60
-  ```
+[editor]
+active_tool = "MarkerPen"
+exit_after_copy = true
+exit_after_save = true
+```
 
----
+`freeze_on_area` controls normal area screenshots. `freeze_on_annotate` controls
+the built-in editor capture. Each external tool has its own `freeze` setting.
 
-### Configuration Reference
+### External tools
 
-Here is a complete list of all available configuration sections and options:
+Each external tool gets a command and a selection-freeze setting. Hyshot creates
+a temporary PNG and replaces `{path}` in the command. Standard output is copied
+to the clipboard, shown in a notification, and printed when Hyshot is run from a
+terminal.
 
-#### `[paths]`
-* **`screenshots_dir`** (string) — Directory where screenshots will be saved.
-  * *Default:* `"~/Pictures"`
+```toml
+[external.ocr]
+command = "nbocr recognize -l chinese -d v6-medium -m ~/.local/share/nbocr/models {path} -f text -t 8"
+freeze = false
 
-#### `[capture]`
-* **`notification`** (boolean) — Show system notifications after screen capture.
-  * *Default:* `true`
-* **`notification_timeout`** (integer) — Notification display duration in milliseconds.
-  * *Default:* `3000`
-* **`save_file`** (boolean) — Whether to save screenshots to disk by default. If `false`, copies to clipboard only.
-  * *Default:* `true`
-* **`file_type`** (string) — Output format for saved screen captures. Options: `"png"`, `"jpeg"`, or `"ppm"`; built-in annotation and OCR inputs always use PNG.
-  * *Default:* `"png"`
-* **`jpeg_quality`** (integer) — Quality of JPEG captures (from `0` to `100`).
-  * *Default:* `100` (max quality)
-* **`png_level`** (integer) — PNG zlib compression level (from `0` to `9`). Higher values take more CPU but yield smaller files.
-  * *Default:* `6`
+[external.translate]
+command = "nbocr recognize -l chinese -d v6-medium -m ~/.local/share/nbocr/models {path} -f text -t 8 2>/dev/null | sed -E '/^(CPU Group:|The device )/d; s/^\\[[0-9]+\\] //; s/ \\([0-9]+%\\)$//' | trans -b -s auto -t zh-CN -no-ansi -no-warn"
+freeze = false
+```
 
-#### `[advanced]`
-* **`freeze_on_area`** (boolean) — Freeze the desktop screen during normal area screenshot selection.
-  * *Default:* `true`
-* **`freeze_on_annotate`** (boolean) — Freeze the desktop during built-in annotation selection.
-  * *Default:* `false`
-* **`delay_ms`** (integer) — Global delay before capturing in milliseconds.
-  * *Default:* `0`
+The translation example sends recognized text to Translate Shell's configured
+online translation engine. Do not configure it for sensitive text unless that
+data flow is acceptable.
 
-#### `[ocr]`
-* **`command`** (string) — External OCR execution command used when running `hyshot ocr`. `{path}` is replaced with the screenshot path.
-  * *Default:* `"nbocr recognize -l chinese -d v6-tiny {path} -f text -t 8"`
+### Longshot and recording
 
-#### `[longshot]`
-* **`fps`** (integer) — Frame rate for capturing scrolling screenshot feed.
-  * *Default:* `12`
-* **`sad_threshold`** (float) — Column match threshold for stitching; lower is stricter.
-  * *Default:* `8.0`
-* **`max_skip`** (integer) — Maximum frames to skip when scroll velocity is high.
-  * *Default:* `6`
-* **`target_overlap`** (float) — Target overlap between matched frames.
-  * *Default:* `0.30`
+```toml
+[longshot]
+fps = 12
+sad_threshold = 8.0
+max_skip = 6
+target_overlap = 0.30
 
-#### `[record]`
-* **`fps`** (integer) — Frame rate for screen recording.
-  * *Default:* `30`
-* **`quality`** (string) — Simple quality preset: `"compact"`, `"balanced"`, or `"high"`.
-  * *Default:* `"balanced"`
-* **`audio`** (boolean) — Record the default audio source.
-  * *Default:* `false`
-* **`save_dir`** (string) — Directory to save recorded videos.
-  * *Default:* `"~/Videos/record"`
-* **`format`** (string) — Video format (file extension).
-  * *Default:* `"webm"`
+[record]
+hide_cursor = true
+fps = 30
+quality = "balanced" # compact, balanced, high
+audio = false
+save_dir = "~/Videos/Screenrecords"
+format = "mp4"
+```
+
+## Desktop entry
+
+Install `resources/site.nullable.annotator.desktop` to open supported image files
+with `hyshot edit`. The retained desktop ID avoids breaking existing file
+associations while the visible application name is Hyshot.
 
 ## License
 
-[GPL-3.0](LICENSE.md)
+Hyshot is distributed under [GPL-3.0](LICENSE.md). When distributing binaries,
+make the corresponding source available under the same license.

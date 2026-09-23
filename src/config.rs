@@ -2,6 +2,7 @@ use anyhow::{Context, Result};
 use directories::ProjectDirs;
 use serde::{Deserialize, Serialize};
 use std::env;
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::PathBuf;
 
@@ -17,7 +18,7 @@ pub struct Config {
     #[serde(default)]
     pub editor: hyshot_editor::EditorPreferences,
     #[serde(default)]
-    pub ocr: OcrConfig,
+    pub external: BTreeMap<String, ExternalToolConfig>,
     #[serde(default)]
     pub longshot: LongshotConfig,
     #[serde(default)]
@@ -93,10 +94,11 @@ pub struct AdvancedConfig {
 
 /// Configuration for OCR tool
 #[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct OcrConfig {
-    /// Command to perform OCR on screenshot
-    #[serde(default = "default_ocr_command")]
+pub struct ExternalToolConfig {
+    /// Command run with a temporary PNG path substituted into {path}.
     pub command: String,
+    #[serde(default)]
+    pub freeze: bool,
 }
 
 /// Configuration for longshot (scrolling screenshot) settings
@@ -128,9 +130,6 @@ fn default_upload_command() -> String {
     "".to_string()
 }
 
-fn default_ocr_command() -> String {
-    "nbocr recognize -l chinese -d v6-tiny {path} -f text -t 8".to_string()
-}
 
 fn default_screenshots_dir() -> String {
     "~/Pictures".to_string()
@@ -419,13 +418,6 @@ impl Default for AdvancedConfig {
     }
 }
 
-impl Default for OcrConfig {
-    fn default() -> Self {
-        Self {
-            command: default_ocr_command(),
-        }
-    }
-}
 
 #[allow(clippy::derivable_impls)]
 impl Default for Config {
@@ -435,7 +427,7 @@ impl Default for Config {
             capture: CaptureConfig::default(),
             advanced: AdvancedConfig::default(),
             editor: hyshot_editor::EditorPreferences::default(),
-            ocr: OcrConfig::default(),
+            external: BTreeMap::new(),
             longshot: LongshotConfig::default(),
             record: RecordConfig::default(),
         }

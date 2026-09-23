@@ -9,12 +9,11 @@ use std::path::PathBuf;
 use crate::cli::{Args, resolve_notif_timeout};
 use crate::config::{Config, get_screenshots_dir};
 use crate::geometry::Geometry;
-use crate::ocr::{self, OcrOptions};
+use crate::external::{self, ExternalOptions};
 
 #[derive(Clone, Copy)]
 pub enum ScreenshotAction {
     Annotate,
-    Ocr,
 }
 
 struct SelectedCapture {
@@ -23,8 +22,8 @@ struct SelectedCapture {
 }
 
 impl SelectedCapture {
-    fn acquire(args: &Args, config: &Config) -> Result<Self> {
-        let guard = if should_freeze(&config.advanced) {
+    fn acquire(args: &Args, freeze: bool) -> Result<Self> {
+        let guard = if freeze {
             Some(crate::freeze::start_freeze(None, args.debug)?)
         } else {
             None
@@ -43,7 +42,7 @@ fn should_freeze(advanced: &crate::config::AdvancedConfig) -> bool {
 }
 
 pub fn screenshot(action: ScreenshotAction, args: &Args, config: &Config) -> Result<()> {
-    let capture = SelectedCapture::acquire(args, config)?;
+    let capture = SelectedCapture::acquire(args, should_freeze(&config.advanced))?;
     match action {
         ScreenshotAction::Annotate => {
             let document =
@@ -51,13 +50,17 @@ pub fn screenshot(action: ScreenshotAction, args: &Args, config: &Config) -> Res
             drop(capture.png);
             return edit_document(document, args, config);
         }
-        ScreenshotAction::Ocr => {}
     }
-    ocr::run(
-        &config.ocr.command,
+}
+
+pub fn external(name: String, args: &Args, config: &Config) -> Result<()> {
+    let tool = config.external.get(&name).ok_or_else(|| anyhow::anyhow!("Unknown external tool '{name}'"))?;
+    let capture = SelectedCapture::acquire(args, tool.freeze)?;
+    external::run(
+        &tool.command,
         &capture.png,
         capture.geometry,
-        OcrOptions {
+        ExternalOptions {
             debug: args.debug,
             silent: args.silent || !config.capture.notification,
             notification_timeout: resolve_notif_timeout(args, config),
@@ -101,7 +104,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn annotation_and_ocr_share_the_external_freeze_setting() {
+    fn external_tools_share_the_external_freeze_setting() {
         let advanced = crate::config::AdvancedConfig {
             freeze_on_area: true,
             freeze_on_external: true,

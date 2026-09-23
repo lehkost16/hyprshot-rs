@@ -101,7 +101,7 @@ pub fn run(mut args: Args) -> Result<()> {
     match subcommand {
         Subcommands::Edit { images } => workflow::edit_files(images, &args, &config),
         Subcommands::Annotate => workflow::screenshot(ScreenshotAction::Annotate, &args, &config),
-        Subcommands::Ocr => workflow::screenshot(ScreenshotAction::Ocr, &args, &config),
+        Subcommands::External { name } => workflow::external(name, &args, &config),
         Subcommands::Longshot { edit } => longshot::handle_longshot(&args, &config, edit),
         Subcommands::Stitch {
             input,

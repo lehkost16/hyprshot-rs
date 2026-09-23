@@ -93,8 +93,8 @@ pub enum Subcommands {
     Area,
     #[command(about = "Screenshot of selected region and open in annotation tool")]
     Annotate,
-    #[command(about = "Screenshot of selected region and perform OCR")]
-    Ocr,
+    #[command(about = "Run a configured external tool on a selected region")]
+    External { name: String },
     #[command(about = "Screenshot of current monitor after 5 seconds delay")]
     In5,
     #[command(about = "Screenshot of current monitor after 10 seconds delay")]

@@ -6,7 +6,7 @@ use tempfile::Builder;
 
 use crate::geometry::Geometry;
 
-pub struct OcrOptions {
+pub struct ExternalOptions {
     pub debug: bool,
     pub silent: bool,
     pub notification_timeout: u32,
@@ -17,7 +17,7 @@ pub fn run(
     template: &str,
     image_bytes: &[u8],
     geometry: Geometry,
-    options: OcrOptions,
+    options: ExternalOptions,
 ) -> Result<()> {
     let debug = options.debug;
     let silent = options.silent;
@@ -82,7 +82,7 @@ pub fn run(
     let ocr_stderr = String::from_utf8_lossy(&output.stderr);
     anyhow::ensure!(
         output.status.success(),
-        "OCR command failed ({}): {}",
+        "External command failed ({}): {}",
         output.status,
         ocr_stderr.trim()
     );
@@ -112,7 +112,7 @@ pub fn run(
         // Send notification
         if !silent {
             let _ = Notification::new()
-                .summary("OCR完成")
+                .summary("External tool completed")
                 .body(&cleaned_txt)
                 .timeout(notif_timeout as i32)
                 .appname("Shot")
@@ -121,7 +121,7 @@ pub fn run(
     } else {
         if !silent {
             let _ = Notification::new()
-                .summary("OCR完成")
+                .summary("External tool completed")
                 .body("未识别出文字")
                 .timeout(notif_timeout as i32)
                 .appname("Shot")
@@ -195,8 +195,8 @@ fn clean_ocr_text(input: &str) -> String {
 mod tests {
     use super::*;
 
-    fn options() -> OcrOptions {
-        OcrOptions {
+    fn options() -> ExternalOptions {
+        ExternalOptions {
             debug: false,
             silent: true,
             notification_timeout: 1000,
@@ -204,7 +204,7 @@ mod tests {
     }
 
     #[test]
-    fn failed_ocr_does_not_treat_stdout_as_success() {
+    fn failed_external_command_does_not_treat_stdout_as_success() {
         let geometry = Geometry::new(0, 0, 10, 10).unwrap();
         let error = run(
             "printf 'recognized text'; exit 9 # {path}",
@@ -213,11 +213,11 @@ mod tests {
             options(),
         )
         .unwrap_err();
-        assert!(error.to_string().contains("OCR command failed"));
+        assert!(error.to_string().contains("External command failed"));
     }
 
     #[test]
-    fn ocr_receives_live_temporary_file() {
+    fn external_command_receives_live_temporary_file() {
         let geometry = Geometry::new(0, 0, 10, 10).unwrap();
         run("test -s {path}", b"png", geometry, options()).unwrap();
     }

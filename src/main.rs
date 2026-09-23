@@ -14,7 +14,7 @@ mod geometry;
 mod workflow;
 
 mod longshot;
-mod ocr;
+mod external;
 mod record;
 mod save;
 mod selector;

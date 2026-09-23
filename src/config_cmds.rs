@@ -77,6 +77,15 @@ pub fn handle_set_config(args: &[String]) -> Result<()> {
 fn set_config_value(config: &mut config::Config, key: &str, value: &str) -> Result<()> {
     let parts: Vec<&str> = key.split('.').collect();
 
+    if parts.len() == 3 && parts[0] == "external" {
+        let tool = config.external.entry(parts[1].to_string()).or_insert_with(|| config::ExternalToolConfig { command: String::new(), freeze: false });
+        match parts[2] {
+            "command" => tool.command = value.to_string(),
+            "freeze" => tool.freeze = value.parse().context("Value must be 'true' or 'false'")?,
+            _ => return Err(anyhow::anyhow!("Unknown external tool field: {}", parts[2])),
+        }
+        return Ok(());
+    }
     if parts.len() != 2 {
         return Err(anyhow::anyhow!(
             "Invalid key format. Expected 'section.field', got '{}'",
@@ -138,11 +147,6 @@ fn set_config_value(config: &mut config::Config, key: &str, value: &str) -> Resu
                 _ => anyhow::bail!("Edit per-tool styles through the editor or TOML configuration"),
             };
             config.editor = settings.try_into()?;
-        }
-
-        // [ocr] section
-        ("ocr", "command") => {
-            config.ocr.command = value.to_string();
         }
 
         // [longshot] section
@@ -639,31 +643,8 @@ fn configure_advanced(config: &mut config::Config) -> Result<()> {
     Ok(())
 }
 
-fn configure_tools(config: &mut config::Config) -> Result<()> {
-    loop {
-        let fields = &[
-            &format!("ocr command      (current: {})", config.ocr.command),
-            "< Back to main menu",
-        ];
-
-        let selection = Select::new()
-            .with_prompt("Select tool command to edit")
-            .default(0)
-            .items(fields)
-            .interact()?;
-
-        match selection {
-            0 => {
-                let input: String = Input::new()
-                    .with_prompt("Enter command for OCR tool")
-                    .default(config.ocr.command.clone())
-                    .interact_text()?;
-                config.ocr.command = input;
-            }
-            1 => break,
-            _ => unreachable!(),
-        }
-    }
+fn configure_tools(_config: &mut config::Config) -> Result<()> {
+    println!("Configure external tools in [external.<name>] or with --set external.<name>.command.");
     Ok(())
 }
 
@@ -672,11 +653,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn external_annotation_setting_is_removed_but_ocr_remains_configurable() {
+    fn external_commands_are_configurable_by_name() {
         let mut config = config::Config::default();
         assert!(set_config_value(&mut config, "annotate.command", "external-editor").is_err());
-        set_config_value(&mut config, "ocr.command", "nbocr recognize {path}").unwrap();
-        assert_eq!(config.ocr.command, "nbocr recognize {path}");
+        set_config_value(&mut config, "external.ocr.command", "nbocr recognize {path}").unwrap();
+        assert_eq!(config.external["ocr"].command, "nbocr recognize {path}");
     }
 
     #[test]

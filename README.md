@@ -200,7 +200,7 @@ Here is a complete list of all available configuration sections and options:
 #### `[advanced]`
 * **`freeze_on_area`** (boolean) — Freeze the desktop screen during normal area screenshot selection.
   * *Default:* `true`
-* **`freeze_on_external`** (boolean) — Freeze the desktop during annotation and OCR selection.
+* **`freeze_on_annotate`** (boolean) — Freeze the desktop during built-in annotation selection.
   * *Default:* `false`
 * **`delay_ms`** (integer) — Global delay before capturing in milliseconds.
   * *Default:* `0`

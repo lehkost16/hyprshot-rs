@@ -38,7 +38,7 @@ impl SelectedCapture {
 }
 
 fn should_freeze(advanced: &crate::config::AdvancedConfig) -> bool {
-    advanced.freeze_on_external
+    advanced.freeze_on_annotate
 }
 
 pub fn screenshot(action: ScreenshotAction, args: &Args, config: &Config) -> Result<()> {
@@ -104,10 +104,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn external_tools_share_the_external_freeze_setting() {
+    fn built_in_annotation_uses_its_freeze_setting() {
         let advanced = crate::config::AdvancedConfig {
             freeze_on_area: true,
-            freeze_on_external: true,
+            freeze_on_annotate: true,
             delay_ms: 0,
         };
         assert!(should_freeze(&advanced));

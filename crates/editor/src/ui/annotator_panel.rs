@@ -499,6 +499,20 @@ fn show_toolbar_toggle(ui: &mut egui::Ui, panel_size: egui::Vec2, expanded: &mut
         .inner
 }
 
+impl WheelHandler for AnnotatorState {
+    fn on_scroll_delta_changed(&mut self, value: f32) {
+        if value > 0. {
+            let zoom = self.extra_zoom_factor - 0.1;
+            if zoom >= 0.1 {
+                self.extra_zoom_factor = zoom;
+            }
+        } else {
+            let zoom = self.extra_zoom_factor + 0.1;
+            self.extra_zoom_factor = zoom;
+        }
+    }
+}
+
 #[cfg(test)]
 mod toolbar_toggle_tests {
     use super::*;
@@ -550,19 +564,5 @@ mod toolbar_toggle_tests {
         }
         assert_eq!(original.right(), panel.x - 8.0);
         assert_eq!(original.top(), 8.0);
-    }
-}
-
-impl WheelHandler for AnnotatorState {
-    fn on_scroll_delta_changed(&mut self, value: f32) {
-        if value > 0. {
-            let zoom = self.extra_zoom_factor - 0.1;
-            if zoom >= 0.1 {
-                self.extra_zoom_factor = zoom;
-            }
-        } else {
-            let zoom = self.extra_zoom_factor + 0.1;
-            self.extra_zoom_factor = zoom;
-        }
     }
 }

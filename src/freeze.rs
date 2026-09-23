@@ -1079,7 +1079,9 @@ Check the support for this protocol on Hyprland/Sway/River/Wayfire."
 
         let src = &capture.data;
         let dst = &mut mmap[..];
-        for (i, px) in src.chunks_exact(4).enumerate() {
+        let (pixels, remainder) = src.as_chunks::<4>();
+        debug_assert!(remainder.is_empty());
+        for (i, px) in pixels.iter().enumerate() {
             let offset = i * 4;
             dst[offset] = px[2];
             dst[offset + 1] = px[1];

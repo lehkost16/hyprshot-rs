@@ -30,7 +30,7 @@ impl SelectedCapture {
             None
         };
         let geometry = crate::selector::select_region(args.debug)?;
-        let png = crate::utils::capture_region_with_grim_cli(&geometry)?;
+        let png = crate::utils::capture_region_png_with_grim_cli(&geometry)?;
         if let Some(guard) = guard {
             guard.stop()?;
         }
@@ -65,18 +65,6 @@ pub fn screenshot(action: ScreenshotAction, args: &Args, config: &Config) -> Res
     )
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn annotation_uses_live_capture_unless_freeze_is_explicit() {
-        assert!(!should_freeze(ScreenshotAction::Annotate, false, true));
-        assert!(should_freeze(ScreenshotAction::Annotate, true, false));
-        assert!(should_freeze(ScreenshotAction::Ocr, false, true));
-    }
-}
-
 pub fn edit_files(paths: Vec<PathBuf>, args: &Args, config: &Config) -> Result<()> {
     edit(EditorInput::Files(paths), args, config)
 }
@@ -106,4 +94,16 @@ fn edit(input: EditorInput, args: &Args, config: &Config) -> Result<()> {
         crate::editor_state::save_changes(&state_path, &initial, &state)?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn annotation_uses_live_capture_unless_freeze_is_explicit() {
+        assert!(!should_freeze(ScreenshotAction::Annotate, false, true));
+        assert!(should_freeze(ScreenshotAction::Annotate, true, false));
+        assert!(should_freeze(ScreenshotAction::Ocr, false, true));
+    }
 }

@@ -364,20 +364,41 @@ pub fn output_with_timeout(mut cmd: Command, timeout: Duration) -> Result<Output
     })
 }
 
-pub fn capture_region_with_grim_cli(geometry: &Geometry) -> Result<Vec<u8>> {
-    let config = crate::config::Config::load().unwrap_or_default();
+pub fn capture_region_with_grim_cli(
+    geometry: &Geometry,
+    capture: &crate::config::CaptureConfig,
+) -> Result<Vec<u8>> {
+    capture_region_with_grim_options(
+        geometry,
+        &capture.file_type,
+        capture.jpeg_quality,
+        capture.png_level,
+    )
+}
+
+/// Editor and OCR inputs must remain PNG, regardless of the saved screenshot format.
+pub fn capture_region_png_with_grim_cli(geometry: &Geometry) -> Result<Vec<u8>> {
+    capture_region_with_grim_options(geometry, "png", 100, 6)
+}
+
+fn capture_region_with_grim_options(
+    geometry: &Geometry,
+    file_type: &str,
+    jpeg_quality: u32,
+    png_level: u32,
+) -> Result<Vec<u8>> {
     let geom_str = format!(
         "{},{} {}x{}",
         geometry.x, geometry.y, geometry.width, geometry.height
     );
     let mut cmd = Command::new("grim");
     cmd.arg("-g").arg(&geom_str);
-    let file_type = config.capture.file_type.trim().to_lowercase();
+    let file_type = file_type.trim().to_lowercase();
     cmd.arg("-t").arg(&file_type);
     if file_type == "jpeg" || file_type == "jpg" {
-        cmd.arg("-q").arg(config.capture.jpeg_quality.to_string());
+        cmd.arg("-q").arg(jpeg_quality.to_string());
     } else if file_type == "png" {
-        cmd.arg("-l").arg(config.capture.png_level.to_string());
+        cmd.arg("-l").arg(png_level.to_string());
     }
     cmd.arg("-");
 

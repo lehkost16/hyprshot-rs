@@ -80,7 +80,7 @@ pub struct AdvancedConfig {
     #[serde(default = "default_freeze")]
     pub freeze_on_region: bool,
 
-    /// Freeze screen when selecting a region for external tools such as annotate/OCR
+    /// Freeze screen when selecting a region for OCR.
     /// Default: false
     #[serde(default)]
     pub freeze_on_external: bool,

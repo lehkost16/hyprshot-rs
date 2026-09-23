@@ -7,6 +7,7 @@ use std::process::{Command, Stdio};
 use crate::geometry::Geometry;
 
 pub struct SaveOptions {
+    pub capture: crate::config::CaptureConfig,
     pub clipboard_only: bool,
     pub raw: bool,
     pub command: Option<Vec<String>>,
@@ -33,7 +34,7 @@ pub fn save_geometry_with_grim(
 
     let image_bytes = match options.image_bytes {
         Some(bytes) => bytes,
-        None => crate::utils::capture_region_with_grim_cli(geometry)?,
+        None => crate::utils::capture_region_with_grim_cli(geometry, &options.capture)?,
     };
 
     if options.raw {

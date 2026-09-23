@@ -192,7 +192,10 @@ fn run_screenshot_capture(
     };
 
     let image_bytes = if freeze_guard.is_some() {
-        Some(crate::utils::capture_region_with_grim_cli(&geometry)?)
+        Some(crate::utils::capture_region_with_grim_cli(
+            &geometry,
+            &config.capture,
+        )?)
     } else {
         None
     };
@@ -217,6 +220,7 @@ fn run_screenshot_capture(
         &geometry,
         &save_fullpath,
         SaveOptions {
+            capture: config.capture.clone(),
             clipboard_only,
             raw,
             command: None, // custom external command is run in Edit mode

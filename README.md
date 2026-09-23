@@ -190,7 +190,7 @@ Here is a complete list of all available configuration sections and options:
   * *Default:* `3000`
 * **`save_file`** (boolean) — Whether to save screenshots to disk by default. If `false`, copies to clipboard only.
   * *Default:* `true`
-* **`file_type`** (string) — Output format for screen captures. Options: `"png"`, `"jpeg"`, or `"ppm"`.
+* **`file_type`** (string) — Output format for saved screen captures. Options: `"png"`, `"jpeg"`, or `"ppm"`; built-in annotation and OCR inputs always use PNG.
   * *Default:* `"png"`
 * **`jpeg_quality`** (integer) — Quality of JPEG captures (from `0` to `100`).
   * *Default:* `100` (max quality)

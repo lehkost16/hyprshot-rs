@@ -1,163 +1,84 @@
-# Configuration Guide - hyshot
+# Hyshot Configuration
 
-Minimal configuration reference aligned with actual behavior.
-
-## Built-in editor
-
-The editor shares hyshot's config. It does not read or migrate
-`~/.config/annotator/config.toml`.
-
-`annotate` always uses the built-in editor. The old `[annotate]` command section
-is no longer used and should be removed from existing configuration files.
-`[ocr].command` remains independently configurable for nbocr.
-
-```toml
-[editor]
-marker_pen_straight_mode = true
-auto_activate_default_tool = false
-auto_deactivate_tool_after_draw = false
-active_tool = "Rectangle"
-exit_after_copy = false
-exit_after_save = false
-```
-
-Explicit preferences support `hyshot --set editor.exit_after_copy true` and are
-never rewritten by editor interaction. `active_tool` is the configured startup
-tool when `auto_activate_default_tool` is enabled, not the last selected tool.
-`marker_pen_straight_mode` is likewise the explicit startup preference.
-
-Remembered widths and RGBA colors are stored separately in
-`~/.config/hyshot/editor-state.toml` on normal editor exit:
-
-```toml
-[tool_settings.Pencil]
-stroke_width = 5.0
-stroke_color_rgba = [255, 69, 58, 255]
-```
-
-Concurrent sessions merge changed tools under a file lock; for the same tool,
-the last saved style wins. No per-frame disk access. `--no-config` uses defaults
-without loading or writing style memory. Invalid TOML is an error. Old
-`[editor.tool_settings.*]` entries must be moved explicitly into the state file
-as `[tool_settings.*]`; they are not silently ignored or auto-migrated.
-
-Editor Save creates a new PNG in `--output-folder`, `HYSHOT_DIR`, or
-`paths.screenshots_dir`, in that order. The old editor `save_directory` is not
-used. Explicit Save/Copy are separate actions, independent of capture's
-automatic `save_file` policy. Notifications respect `--silent` and
-`capture.notification`.
-
-## Overview
-
-- Config is a TOML file.
-- Priority: CLI args > `HYSHOT_DIR` env > config file > defaults.
-- CLI config management is documented in `doc/CLI.md`.
-
-## Configuration File Location
-
-Default path:
-
-```
-~/.config/hyshot/config.toml
-```
-
-Get the active path:
+Hyshot stores its configuration at `~/.config/hyshot/config.toml`.
 
 ```bash
-hyshot --config-path
+hyshot --init-config
+hyshot --show-config
+hyshot --set record.fps 60
 ```
 
-## Configuration Structure
+## Capture and editor
 
 ```toml
 [paths]
-[hotkeys]
-[capture]
-[advanced]
-```
-
-### Default Configuration (current)
-
-```toml
-[paths]
-screenshots_dir = "~/Pictures"
-
-[hotkeys]
-window = "SUPER, Print"
-region = "SUPER SHIFT, Print"
-output = "SUPER CTRL, Print"
-active_output = ", Print"
+screenshots_dir = "~/Pictures/Screenshots"
 
 [capture]
 notification = true
 notification_timeout = 3000
+save_file = false
+file_type = "png"
+png_level = 6
 
 [advanced]
 freeze_on_area = true
 freeze_on_annotate = false
 delay_ms = 0
+
+[editor]
+active_tool = "MarkerPen"
+auto_activate_default_tool = false
+auto_deactivate_tool_after_draw = true
+exit_after_copy = true
+exit_after_save = true
 ```
 
-## Section: Paths
+`freeze_on_area` applies only to `hyshot area`. `freeze_on_annotate` applies to
+the built-in `annotate` workflow. Saved editor tool styles are kept separately
+in `~/.config/hyshot/editor-state.toml`; no Annotator config is read.
 
-### `screenshots_dir`
+## External tools
 
-- Directory for saved screenshots.
-- Used when `--clipboard-only` is not set.
-- Created if missing; must be writable.
+External tools are named TOML tables. `hyshot external NAME` captures a PNG,
+substitutes `{path}`, and runs the configured command. Its standard output is
+copied to the clipboard and reported through Hyshot.
 
-Path expansion:
-- `~` and `$HOME` are expanded.
-- `$XDG_PICTURES_DIR` is expanded if available.
-- Other `$VAR` are expanded if set.
-- Undefined variables are left as-is.
-- Relative paths stay relative (no canonicalization).
+```toml
+[external.ocr]
+command = "nbocr recognize -l chinese -d v6-medium -m ~/.local/share/nbocr/models {path} -f text -t 8"
+freeze = false
 
-Priority for save directory:
-1. `-o/--output-folder`
-2. `HYSHOT_DIR`
-3. `paths.screenshots_dir`
-4. `~/Pictures`
+[external.translate]
+command = "your-ocr-command {path} | trans -b -s auto -t zh-CN"
+freeze = false
+```
 
-## Section: Hotkeys
+The supported placeholders are `{path}`, `{x}`, `{y}`, `{w}`, `{h}`,
+`{monitor}`, and `{scale}`. Set tools from the command line with:
 
-These values are **only for Hyprland config generation and the hotkey wizard**.
-They do not change runtime behavior by themselves.
+```bash
+hyshot --set external.balabala.command "your-command {path}"
+hyshot --set external.balabala.freeze false
+```
 
-For working examples, see `doc/HOTKEYS.md`.
+## Longshot and recording
 
-## Section: Capture
+```toml
+[longshot]
+fps = 12
+sad_threshold = 8.0
+max_skip = 6
+target_overlap = 0.30
 
-### `notification`
+[record]
+hide_cursor = true
+fps = 30
+quality = "balanced"
+audio = false
+save_dir = "~/Videos/Screenrecords"
+format = "mp4"
+```
 
-- When `true`, a desktop notification is attempted after capture.
-- Notification failures are logged but do not abort the capture.
-- `--silent` forces notifications off.
-
-### `notification_timeout`
-
-- Timeout for notifications in milliseconds.
-
-## Section: Advanced
-
-### `freeze_on_area`
-
-- Freezes the desktop during normal area screenshot selection.
-- If the compositor lacks required Wayland protocols, freeze is skipped with a warning.
-
-### `freeze_on_annotate`
-
-- Freezes the desktop during built-in annotation selection.
-
-### `delay_ms`
-
-- Delay before capture in milliseconds.
-
-## Managing Configuration
-
-See `doc/CLI.md` for:
-- `--init-config`
-- `--show-config`
-- `--config-path`
-- `--set`
-- `--no-config`
+Recording quality is `compact`, `balanced`, or `high`. Longshot retains bounded
+frame history and has explicit image-memory limits; see [ARCHITECTURE.md](ARCHITECTURE.md).

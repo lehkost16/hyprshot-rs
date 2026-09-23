@@ -1,43 +1,23 @@
-# Hotkeys Guide - hyshot
+# Hyshot Hotkeys
 
-Minimal keybinding examples for supported compositors.
-
-## Quick Start
-
-For usage and flags, see [README.md](../README.md) and [CLI.md](CLI.md).
-
----
-
-## Hyprland
-
-Add to `~/.config/hypr/hyprland.conf`:
+Hyshot does not install keybindings automatically. Add bindings to your Hyprland
+configuration, then reload the compositor.
 
 ```conf
-bind = SUPER, Print, exec, hyshot -m window
-bind = SUPER SHIFT, Print, exec, hyshot -m region
-bind = SUPER CTRL, Print, exec, hyshot -m output
-bind = , Print, exec, hyshot -m output -m active
+bind = SUPER, Print, exec, hyshot now
+bind = SUPER SHIFT, Print, exec, hyshot area
+bind = SUPER SHIFT, S, exec, hyshot annotate
+bind = SUPER CTRL, S, exec, hyshot edit
+bind = SUPER, T, exec, hyshot external ocr
+bind = SUPER SHIFT, T, exec, hyshot external translate
+bind = SUPER SHIFT, L, exec, hyshot longshot --edit
+bind = SUPER, R, exec, hyshot record
 ```
 
-Reload Hyprland:
 ```bash
-hyprctl reload
+hyprctl reload config-only
 ```
 
----
-
-## Sway
-
-Add to `~/.config/sway/config`:
-
-```conf
-bindsym $mod+Print exec hyshot -m window
-bindsym $mod+Shift+Print exec hyshot -m region
-bindsym $mod+Ctrl+Print exec hyshot -m output
-bindsym Print exec hyshot -m output -m active
-```
-
-Reload Sway:
-```bash
-swaymsg reload
-```
+`hyshot --print-binds` prints a smaller generic set of Hyprland bindings. The
+external names must exist in `~/.config/hyshot/config.toml` before their hotkeys
+are useful.

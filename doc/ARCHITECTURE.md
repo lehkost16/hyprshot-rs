@@ -1,92 +1,51 @@
-# Architecture
+# Hyshot Architecture
 
-Hyshot is one application with an internal editor library, not two executables.
+Hyshot is one application. The root binary owns CLI dispatch, configuration,
+screen capture, session lifecycle, and external-process execution. The editor is
+an internal library, not a separate Annotator process.
 
-## Application
+## Root application
 
-- `src/app.rs`: CLI/config dispatch and ordinary screenshot commands.
-- `src/workflow.rs`: selection/freeze/capture lifecycle and routing to editing
-  or OCR. Built-in editing receives an original-pixel ImageDocument without a
-  temporary file; file and stitched-image entry points use the same contract.
-- `src/compositor.rs`: monitor metadata shared by recording, scrolling capture
-  and external-command placeholders; no dependency on editor/OCR execution.
-- `src/ocr.rs`: the explicitly configured OCR process; temporary images
-  remain alive until their commands finish. Failed OCR never copies stdout.
-- `src/capture_session.rs`: recorder/overlay startup, atomic state publication,
-  startup rollback and bounded graceful stop. A stop timeout retains state and
-  prevents processing an unfinished video.
-- `src/record/`: video-specific arguments and finalization.
-- `src/longshot/`: scrolling-capture orchestration, matching and stitching.
-- `crates/core`: logical rectangles and immutable original-pixel documents shared
-  by capture and editing; no UI or compositor dependencies.
-- `src/config.rs`: one configuration owner, including `[editor]`; writes use
-  same-directory temporary files and atomic replacement.
+- `src/app.rs`: parses CLI intent and dispatches commands.
+- `src/workflow.rs`: selected-region acquisition and routing to editor or an
+  external tool.
+- `src/external.rs`: creates a temporary PNG, substitutes external-tool
+  placeholders, captures output, and handles clipboard and notifications.
+- `src/config.rs` and `src/config_cmds.rs`: TOML ownership, defaults, and
+  configuration commands.
+- `src/capture_session.rs`: atomic recording/longshot session state and process
+  lifecycle.
+- `src/record/`: region recording and finalization.
+- `src/longshot/`: scrolling-capture orchestration, decoding, matching, canvas,
+  and overlay.
 
-Recorders remain OS processes because recording outlives the invoking CLI.
-Editing runs in-process on the main thread. Recording and longshot each hold an
-exclusive toggle/finalization lock under XDG_RUNTIME_DIR/hyshot. Process identities
-include boot ID and start ticks; pidfds bind signals to the verified process.
-Recording, Finalizing and Failed states keep failed conversions retryable without
-signalling another process. No PID-only fallback is used. Final outputs refuse
-overwrite; conversion failures retain the source and session state.
+## Shared image and editor libraries
 
-## Editor
+- `crates/core`: immutable original-pixel image documents and logical geometry.
+- `crates/editor`: annotation tools, undo/redo, image export, Wayland surfaces,
+  GPU rendering, and editor preferences.
+- `src/editor_state.rs`: persists remembered per-tool styles independently from
+  explicit `config.toml` preferences.
 
-`crates/editor` exposes input, settings, options and its entry point.
+## Data boundaries
 
-- `lib.rs`: input decoding before Wayland initialization.
-- `config.rs`: serializable preferences shared in memory, with no file I/O.
-- `annotator.rs` and `annotator/`: tools, selection and undo/redo.
-- `ui/`: image panel, toolbars, layout, icons and system fonts.
-- `platform/`: Wayland surfaces, input, scaling and GPU/window lifecycle.
-- `export.rs`: shared save/copy path for shortcuts and buttons; close only after
-  success. `image_save.rs` creates collision-safe lossless PNG output.
+Normal capture can use its configured image format. Editor and external-tool
+workflows always capture PNG so pixel data and external input are predictable.
+`ImageDocument` keeps original RGBA pixels immutable while annotations and zoom
+remain editor state.
 
-The editor returns tool styles on normal exit. `src/editor_state.rs` merges changed
-styles into a separate editor-state.toml under a lock and atomically replaces it.
-Explicit config.toml preferences are not rewritten. No per-frame disk access;
-`--no-config` neither loads nor saves style memory. A crash before normal exit
-loses session changes. The old independent annotator config is not auto-migrated.
+Longshot decodes its recording twice: first for bounded fixed-header/footer
+sampling, then for incremental matching. Source frames are limited to 64 MiB,
+the RGB canvas to 128 MiB, and editor input to 256 MiB decoded RGBA. These are
+explicit failure limits rather than silent resizing.
 
-The Wayland app ID remains `site.nullable.annotator` to retain compositor rules;
-this does not introduce a separate executable or configuration dependency.
+## Verification
 
-## Validation
-
-Longshot uses two decoder passes: a five-frame luminance reservoir for fixed
-header/footer detection, followed by incremental matching. It retains a reference
-frame rather than the whole video. Input RGB frames are limited to 64 MiB and the
-RGB canvas to 128 MiB; these are data limits, not a whole-process RSS guarantee.
-Reallocation and decoder buffers still contribute to peak memory. Export consumes
-the canvas without duplicating it. Decode errors, truncated frames and canvas
-overflow are explicit errors; the source recording is retained for recovery.
-
-`stitch` gets actual pixel dimensions from ffprobe. The old width/height/scale
-overrides are removed rather than used to guess dimensions after probe failure.
-Published longshot files must not already exist.
-
-`longshot --edit` remembers editor launch in its session; `stitch --edit` opens
-the completed image directly. Both publish the PNG before launching the editor,
-so an editor failure cannot lose the stitch result. Normal commands do not launch
-the editor. Multi-file editor input has a combined 256 MiB decoded RGBA budget.
-Images above the active GPU texture limit are rejected, never silently resized.
-These limits do not include GPU textures, render buffers or annotation history.
-Unannotated export returns original pixels; annotated export targets the original
-physical dimensions, independent of preview zoom and fractional-scale rounding.
-
-```sh
-cargo fmt --all --check
+```bash
+cargo fmt --check
 cargo test --workspace --offline
-cargo build --workspace --offline
-cargo test --offline synthetic_video_pipeline -- --ignored --nocapture
-cargo test -p hyshot-editor --offline offscreen_export -- --ignored --nocapture
+cargo build --release --offline
 ```
 
-Tests cover input pixel preservation, settings serialization, atomic config
-writes, export destinations, startup cleanup and existing toolbar/scaling/
-stitching contracts. Multi-monitor interaction, clipboard ownership and real
-recording completion still require interactive Wayland verification.
-
-The explicit GPU test checks opaque pixel values at 1.0/1.25/1.5/2.0 output scales,
-unchanged-image zero-copy export, and identical annotated output at 25% and 200%
-preview zoom. It is not a compositor color-management or monitor-HDR test.
+Interactive Wayland verification remains necessary for compositor scaling,
+clipboard ownership, recording completion, and external-tool network behavior.

@@ -155,7 +155,8 @@ pub fn build_annotator(
 
     let config = app.session.settings();
 
-    let scale_factor = egui_ctx.pixels_per_point() as f64;
+    // egui applies set_pixels_per_point at the next pass; layout runs before it.
+    let scale_factor = current_view.scale_factor();
     let (screen_w, screen_h) = app.screen_size();
     let include_secondary_toolbar = config.auto_activate_default_tool;
     let (_, fit_scale) = fit_image_to_screen(
@@ -257,7 +258,7 @@ pub fn build_annotator(
             image,
             annotator_panel_position,
             initial_fit_scale,
-            egui_ctx.pixels_per_point() as f64,
+            scale_factor,
         );
 
         create_primary_toolbar(
@@ -503,6 +504,15 @@ mod tests {
                 .width,
             FULL_TOOLBAR_WIDTH
         );
+    }
+
+    #[test]
+    fn wide_image_that_fits_fractional_output_keeps_native_pixels() {
+        let (size, zoom) = fit_image_to_screen(2223, 620, 2048, 1280, 1.25, false);
+        assert_eq!(zoom, 1.0);
+        assert_eq!(size, LogicalSize::new(1778, 496));
+        let (_, stale_zoom) = fit_image_to_screen(2223, 620, 2048, 1280, 1.0, false);
+        assert!(stale_zoom < 0.9);
     }
 
     #[test]

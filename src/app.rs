@@ -191,18 +191,6 @@ fn run_screenshot_capture(
         _ => unreachable!(),
     };
 
-    let image_bytes = if freeze_guard.is_some() {
-        if debug {
-            eprintln!(
-                "Capture region BEFORE stopping freeze overlay to preserve transient windows (like tooltips)"
-            );
-        }
-        let bytes = crate::utils::capture_region_with_grim_cli(&geometry)?;
-        Some(bytes)
-    } else {
-        None
-    };
-
     if let Some(guard) = freeze_guard {
         guard.stop()?;
     }
@@ -229,7 +217,7 @@ fn run_screenshot_capture(
             silent,
             notif_timeout,
             debug,
-            image_bytes,
+            image_bytes: None,
             upload: args.upload,
             upload_command: config.capture.upload_command.clone(),
         },

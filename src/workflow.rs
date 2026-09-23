@@ -11,6 +11,7 @@ use crate::config::{Config, get_screenshots_dir};
 use crate::geometry::Geometry;
 use crate::ocr::{self, OcrOptions};
 
+#[derive(Clone, Copy)]
 pub enum ScreenshotAction {
     Annotate,
     Ocr,
@@ -22,23 +23,27 @@ struct SelectedCapture {
 }
 
 impl SelectedCapture {
-    fn acquire(args: &Args, config: &Config) -> Result<Self> {
-        let guard = if args.freeze || config.advanced.freeze_on_external {
+    fn acquire(action: ScreenshotAction, args: &Args, config: &Config) -> Result<Self> {
+        let guard = if should_freeze(action, args.freeze, config.advanced.freeze_on_external) {
             Some(crate::freeze::start_freeze(None, args.debug)?)
         } else {
             None
         };
         let geometry = crate::selector::select_region(args.debug)?;
-        let png = crate::utils::capture_region_with_grim_cli(&geometry)?;
         if let Some(guard) = guard {
             guard.stop()?;
         }
+        let png = crate::utils::capture_region_with_grim_cli(&geometry)?;
         Ok(Self { geometry, png })
     }
 }
 
+fn should_freeze(action: ScreenshotAction, explicit_freeze: bool, freeze_ocr: bool) -> bool {
+    explicit_freeze || matches!(action, ScreenshotAction::Ocr) && freeze_ocr
+}
+
 pub fn screenshot(action: ScreenshotAction, args: &Args, config: &Config) -> Result<()> {
-    let capture = SelectedCapture::acquire(args, config)?;
+    let capture = SelectedCapture::acquire(action, args, config)?;
     match action {
         ScreenshotAction::Annotate => {
             let document =
@@ -58,6 +63,18 @@ pub fn screenshot(action: ScreenshotAction, args: &Args, config: &Config) -> Res
             notification_timeout: resolve_notif_timeout(args, config),
         },
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn annotation_uses_live_capture_unless_freeze_is_explicit() {
+        assert!(!should_freeze(ScreenshotAction::Annotate, false, true));
+        assert!(should_freeze(ScreenshotAction::Annotate, true, false));
+        assert!(should_freeze(ScreenshotAction::Ocr, false, true));
+    }
 }
 
 pub fn edit_files(paths: Vec<PathBuf>, args: &Args, config: &Config) -> Result<()> {

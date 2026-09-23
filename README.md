@@ -78,8 +78,9 @@ resolved at runtime with fontconfig (`fc-match`); install a CJK font on the targ
 system. See [Architecture](doc/ARCHITECTURE.md) for module boundaries.
 
 The desktop launcher is `resources/site.nullable.annotator.desktop`. Its displayed
-name is Hyshot; opening images runs `hyshot edit %F`, while desktop actions expose
-annotation, scrolling capture and recording. The existing desktop ID and icon name
+name is Hyshot; its only entry opens images with `hyshot edit %F`.
+Screenshot and recording commands remain available through the CLI and keybindings.
+The existing desktop ID and icon name
 are retained so image associations and compositor rules keep working. Install the
 current Hyshot binary before updating the launcher. No separate Annotator binary
 or Annotator configuration is used by this entry.
@@ -199,7 +200,7 @@ Here is a complete list of all available configuration sections and options:
 #### `[advanced]`
 * **`freeze_on_region`** (boolean) — Freeze the desktop screen during region selection.
   * *Default:* `true`
-* **`freeze_on_external`** (boolean) — Freeze the desktop for `annotate` and `ocr` region selection.
+* **`freeze_on_external`** (boolean) — Freeze the desktop for OCR region selection.
   * *Default:* `false`
 * **`delay_ms`** (integer) — Global delay before capturing in milliseconds.
   * *Default:* `0`

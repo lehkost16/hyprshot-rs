@@ -104,7 +104,7 @@ command = "nbocr recognize -l chinese -d v6-medium -m ~/.local/share/nbocr/model
 freeze = false
 
 [external.translate]
-command = "nbocr recognize -l chinese -d v6-medium -m ~/.local/share/nbocr/models {path} -f text -t 8 2>/dev/null | sed -E '/^(CPU Group:|The device )/d; s/^\\[[0-9]+\\] //; s/ \\([0-9]+%\\)$//' | trans -b -s auto -t zh-CN -no-ansi -no-warn"
+command = "nbocr recognize -l chinese -d v6-medium -m ~/.local/share/nbocr/models {path} -f text -t 8 2>/dev/null | sed -E '/^(CPU Group:|The device )/d; s/^\\[[0-9]+\\] //; s/ \\([0-9]+%\\)$//' | trans -b -s auto -t en -no-ansi -no-warn"
 freeze = false
 ```
 

@@ -30,10 +30,10 @@ impl SelectedCapture {
             None
         };
         let geometry = crate::selector::select_region(args.debug)?;
+        let png = crate::utils::capture_region_with_grim_cli(&geometry)?;
         if let Some(guard) = guard {
             guard.stop()?;
         }
-        let png = crate::utils::capture_region_with_grim_cli(&geometry)?;
         Ok(Self { geometry, png })
     }
 }

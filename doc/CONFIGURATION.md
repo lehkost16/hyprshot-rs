@@ -149,8 +149,7 @@ For working examples, see `doc/HOTKEYS.md`.
 ### `freeze_on_external`
 
 - Enables freeze by default for OCR only. `annotate` uses a direct live capture by
-  default. When freeze is enabled explicitly, it is used only for selection; Hyshot
-  closes the freeze overlay before it reads the final image from the desktop.
+  default; pass `hyshot --freeze annotate` to capture the selected frozen frame.
 
 ### `delay_ms`
 

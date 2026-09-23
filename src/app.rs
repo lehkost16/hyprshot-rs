@@ -191,6 +191,12 @@ fn run_screenshot_capture(
         _ => unreachable!(),
     };
 
+    let image_bytes = if freeze_guard.is_some() {
+        Some(crate::utils::capture_region_with_grim_cli(&geometry)?)
+    } else {
+        None
+    };
+
     if let Some(guard) = freeze_guard {
         guard.stop()?;
     }
@@ -217,7 +223,7 @@ fn run_screenshot_capture(
             silent,
             notif_timeout,
             debug,
-            image_bytes: None,
+            image_bytes,
             upload: args.upload,
             upload_command: config.capture.upload_command.clone(),
         },

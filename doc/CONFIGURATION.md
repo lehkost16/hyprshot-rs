@@ -94,8 +94,7 @@ notification_timeout = 3000
 
 [advanced]
 freeze_on_area = true
-freeze_on_annotate = false
-freeze_on_ocr = false
+freeze_on_external = false
 delay_ms = 0
 ```
 
@@ -146,13 +145,9 @@ For working examples, see `doc/HOTKEYS.md`.
 - Freezes the desktop during normal area screenshot selection.
 - If the compositor lacks required Wayland protocols, freeze is skipped with a warning.
 
-### `freeze_on_annotate`
+### `freeze_on_external`
 
-- Freezes the desktop during `annotate` selection.
-
-### `freeze_on_ocr`
-
-- Freezes the desktop during OCR selection.
+- Freezes the desktop during annotation and OCR selection.
 
 ### `delay_ms`
 

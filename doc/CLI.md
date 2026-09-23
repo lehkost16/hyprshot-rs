@@ -73,8 +73,8 @@ hyprctl monitors
 | --------- | ----- | ------------------------------ | ------- |
 | `--delay` | `-D`  | Delay before capture (seconds) | `-D 3`  |
 
-Freeze behavior is configured per action in `[advanced]` with `freeze_on_area`,
-`freeze_on_annotate`, and `freeze_on_ocr`.
+Freeze behavior is configured in `[advanced]` with `freeze_on_area` for normal
+area screenshots and `freeze_on_external` for annotation and OCR selection.
 
 ### Notification Options
 

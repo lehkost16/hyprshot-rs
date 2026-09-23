@@ -80,15 +80,10 @@ pub struct AdvancedConfig {
     #[serde(default = "default_freeze")]
     pub freeze_on_area: bool,
 
-    /// Freeze screen when selecting a region to annotate.
+    /// Freeze screen when selecting a region for annotation or OCR processing.
     /// Default: false
     #[serde(default)]
-    pub freeze_on_annotate: bool,
-
-    /// Freeze screen when selecting a region for OCR.
-    /// Default: false
-    #[serde(default)]
-    pub freeze_on_ocr: bool,
+    pub freeze_on_external: bool,
 
     /// Delay before capture in milliseconds
     /// Default: 0
@@ -418,8 +413,7 @@ impl Default for AdvancedConfig {
     fn default() -> Self {
         Self {
             freeze_on_area: default_freeze(),
-            freeze_on_annotate: false,
-            freeze_on_ocr: false,
+            freeze_on_external: false,
             delay_ms: 0,
         }
     }

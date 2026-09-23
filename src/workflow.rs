@@ -24,7 +24,7 @@ struct SelectedCapture {
 
 impl SelectedCapture {
     fn acquire(action: ScreenshotAction, args: &Args, config: &Config) -> Result<Self> {
-        let guard = if should_freeze(action, args.freeze, config.advanced.freeze_on_external) {
+        let guard = if should_freeze(action, &config.advanced) {
             Some(crate::freeze::start_freeze(None, args.debug)?)
         } else {
             None
@@ -38,8 +38,11 @@ impl SelectedCapture {
     }
 }
 
-fn should_freeze(action: ScreenshotAction, explicit_freeze: bool, freeze_ocr: bool) -> bool {
-    explicit_freeze || matches!(action, ScreenshotAction::Ocr) && freeze_ocr
+fn should_freeze(action: ScreenshotAction, advanced: &crate::config::AdvancedConfig) -> bool {
+    match action {
+        ScreenshotAction::Annotate => advanced.freeze_on_annotate,
+        ScreenshotAction::Ocr => advanced.freeze_on_ocr,
+    }
 }
 
 pub fn screenshot(action: ScreenshotAction, args: &Args, config: &Config) -> Result<()> {
@@ -101,9 +104,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn annotation_uses_live_capture_unless_freeze_is_explicit() {
-        assert!(!should_freeze(ScreenshotAction::Annotate, false, true));
-        assert!(should_freeze(ScreenshotAction::Annotate, true, false));
-        assert!(should_freeze(ScreenshotAction::Ocr, false, true));
+    fn each_selected_capture_uses_its_own_freeze_setting() {
+        let advanced = crate::config::AdvancedConfig {
+            freeze_on_area: true,
+            freeze_on_annotate: true,
+            freeze_on_ocr: false,
+            delay_ms: 0,
+        };
+        assert!(should_freeze(ScreenshotAction::Annotate, &advanced));
+        assert!(!should_freeze(ScreenshotAction::Ocr, &advanced));
     }
 }

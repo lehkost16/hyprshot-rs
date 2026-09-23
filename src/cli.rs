@@ -23,9 +23,6 @@ pub struct Args {
     #[arg(short = 'D', long, help = "Delay before taking screenshot (seconds)")]
     pub delay: Option<u64>,
 
-    #[arg(long, help = "Freeze the screen on initialization")]
-    pub freeze: bool,
-
     #[arg(short, long, help = "Print debug information")]
     pub debug: bool,
 
@@ -155,7 +152,6 @@ impl std::fmt::Debug for Args {
             .field("output_folder", &self.output_folder)
             .field("filename", &self.filename)
             .field("delay", &self.delay)
-            .field("freeze", &self.freeze)
             .field("debug", &self.debug)
             .field("silent", &self.silent)
             .field("raw", &self.raw)

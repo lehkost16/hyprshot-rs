@@ -151,7 +151,7 @@ fn run_screenshot_capture(
 
     // Start freeze overlay if region mode
     let is_region = matches!(subcommand, Subcommands::Area);
-    let freeze = is_region && (args.freeze || config.advanced.freeze_on_region);
+    let freeze = is_region && config.advanced.freeze_on_area;
 
     let freeze_guard = if freeze {
         if debug {

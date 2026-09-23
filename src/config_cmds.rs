@@ -111,12 +111,16 @@ fn set_config_value(config: &mut config::Config, key: &str, value: &str) -> Resu
         }
 
         // [advanced] section
-        ("advanced", "freeze_on_region") => {
-            config.advanced.freeze_on_region =
+        ("advanced", "freeze_on_area") => {
+            config.advanced.freeze_on_area =
                 value.parse().context("Value must be 'true' or 'false'")?;
         }
-        ("advanced", "freeze_on_external") => {
-            config.advanced.freeze_on_external =
+        ("advanced", "freeze_on_annotate") => {
+            config.advanced.freeze_on_annotate =
+                value.parse().context("Value must be 'true' or 'false'")?;
+        }
+        ("advanced", "freeze_on_ocr") => {
+            config.advanced.freeze_on_ocr =
                 value.parse().context("Value must be 'true' or 'false'")?;
         }
         ("advanced", "delay_ms") => {
@@ -210,8 +214,9 @@ fn set_config_value(config: &mut config::Config, key: &str, value: &str) -> Resu
                    - capture.notification_timeout (milliseconds)\n\
                    - capture.save_file (true, false)\n\
                  Advanced:\n\
-                   - advanced.freeze_on_region (true, false)\n\
-                   - advanced.freeze_on_external (true, false)\n\
+                   - advanced.freeze_on_area (true, false)\n\
+                   - advanced.freeze_on_annotate (true, false)\n\
+                   - advanced.freeze_on_ocr (true, false)\n\
                    - advanced.delay_ms (milliseconds)\n\
                   Annotate:\n\
                   OCR:\n\
@@ -596,13 +601,14 @@ fn configure_advanced(config: &mut config::Config) -> Result<()> {
     loop {
         let fields = &[
             &format!(
-                "freeze_on_region (current: {})",
-                config.advanced.freeze_on_region
+                "freeze_on_area (current: {})",
+                config.advanced.freeze_on_area
             ),
             &format!(
-                "freeze_on_external (current: {})",
-                config.advanced.freeze_on_external
+                "freeze_on_annotate (current: {})",
+                config.advanced.freeze_on_annotate
             ),
+            &format!("freeze_on_ocr (current: {})", config.advanced.freeze_on_ocr),
             &format!("delay_ms (current: {} ms)", config.advanced.delay_ms),
             "< Back to main menu",
         ];
@@ -615,24 +621,30 @@ fn configure_advanced(config: &mut config::Config) -> Result<()> {
 
         match selection {
             0 => {
-                config.advanced.freeze_on_region = Confirm::new()
-                    .with_prompt("Freeze desktop during region selection?")
-                    .default(config.advanced.freeze_on_region)
+                config.advanced.freeze_on_area = Confirm::new()
+                    .with_prompt("Freeze desktop during area screenshot selection?")
+                    .default(config.advanced.freeze_on_area)
                     .interact()?;
             }
             1 => {
-                config.advanced.freeze_on_external = Confirm::new()
-                    .with_prompt("Freeze desktop for annotate/OCR selection?")
-                    .default(config.advanced.freeze_on_external)
+                config.advanced.freeze_on_annotate = Confirm::new()
+                    .with_prompt("Freeze desktop during annotation selection?")
+                    .default(config.advanced.freeze_on_annotate)
                     .interact()?;
             }
             2 => {
+                config.advanced.freeze_on_ocr = Confirm::new()
+                    .with_prompt("Freeze desktop during OCR selection?")
+                    .default(config.advanced.freeze_on_ocr)
+                    .interact()?;
+            }
+            3 => {
                 config.advanced.delay_ms = Input::new()
                     .with_prompt("Default delay before capture (ms)")
                     .default(config.advanced.delay_ms)
                     .interact_text()?;
             }
-            3 => break,
+            4 => break,
             _ => unreachable!(),
         }
     }

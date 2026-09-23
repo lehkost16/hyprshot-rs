@@ -69,12 +69,12 @@ hyprctl monitors
 
 ### Capture Options
 
-| Option     | Short | Description                           | Example |
-| ---------- | ----- | ------------------------------------- | ------- |
-| `--delay`  | `-D`  | Delay before capture (seconds)        | `-D 3`  |
-| `--freeze` |       | Freeze screen during capture/selection | `--freeze` |
+| Option    | Short | Description                    | Example |
+| --------- | ----- | ------------------------------ | ------- |
+| `--delay` | `-D`  | Delay before capture (seconds) | `-D 3`  |
 
-Note: `--freeze` does not require extra tools. If the compositor doesn't support freeze, it will be skipped.
+Freeze behavior is configured per action in `[advanced]` with `freeze_on_area`,
+`freeze_on_annotate`, and `freeze_on_ocr`.
 
 ### Notification Options
 

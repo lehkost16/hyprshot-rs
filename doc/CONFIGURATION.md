@@ -93,8 +93,9 @@ notification = true
 notification_timeout = 3000
 
 [advanced]
-freeze_on_region = true
-freeze_on_external = false
+freeze_on_area = true
+freeze_on_annotate = false
+freeze_on_ocr = false
 delay_ms = 0
 ```
 
@@ -140,16 +141,18 @@ For working examples, see `doc/HOTKEYS.md`.
 
 ## Section: Advanced
 
-### `freeze_on_region`
+### `freeze_on_area`
 
-- Enables `--freeze` by default.
-- Applies to normal region capture.
+- Freezes the desktop during normal area screenshot selection.
 - If the compositor lacks required Wayland protocols, freeze is skipped with a warning.
 
-### `freeze_on_external`
+### `freeze_on_annotate`
 
-- Enables freeze by default for OCR only. `annotate` uses a direct live capture by
-  default; pass `hyshot --freeze annotate` to capture the selected frozen frame.
+- Freezes the desktop during `annotate` selection.
+
+### `freeze_on_ocr`
+
+- Freezes the desktop during OCR selection.
 
 ### `delay_ms`
 

@@ -75,15 +75,20 @@ pub struct CaptureConfig {
 /// Advanced configuration options
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct AdvancedConfig {
-    /// Freeze screen when selecting region
+    /// Freeze screen when selecting a normal area screenshot.
     /// Default: true
     #[serde(default = "default_freeze")]
-    pub freeze_on_region: bool,
+    pub freeze_on_area: bool,
+
+    /// Freeze screen when selecting a region to annotate.
+    /// Default: false
+    #[serde(default)]
+    pub freeze_on_annotate: bool,
 
     /// Freeze screen when selecting a region for OCR.
     /// Default: false
     #[serde(default)]
-    pub freeze_on_external: bool,
+    pub freeze_on_ocr: bool,
 
     /// Delay before capture in milliseconds
     /// Default: 0
@@ -412,8 +417,9 @@ impl Default for LongshotConfig {
 impl Default for AdvancedConfig {
     fn default() -> Self {
         Self {
-            freeze_on_region: default_freeze(),
-            freeze_on_external: false,
+            freeze_on_area: default_freeze(),
+            freeze_on_annotate: false,
+            freeze_on_ocr: false,
             delay_ms: 0,
         }
     }

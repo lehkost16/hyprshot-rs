@@ -132,7 +132,7 @@ format = "mp4"
 
 ## Desktop entry
 
-Install `resources/site.nullable.annotator.desktop` to open supported image files
+Install `resources/hyshot.desktop` to open supported image files
 with `hyshot edit`. The retained desktop ID avoids breaking existing file
 associations while the visible application name is Hyshot.
 

@@ -5,7 +5,7 @@ use rustc_hash::FxHashMap;
 use std::any::{Any, TypeId};
 use std::collections::VecDeque;
 use std::sync::Arc;
-use std::sync::oneshot::Receiver;
+use std::sync::mpsc::Receiver;
 
 #[derive(Default)]
 pub struct WindowContext {

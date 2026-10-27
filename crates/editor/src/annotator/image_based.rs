@@ -25,9 +25,9 @@ use std::cell::RefCell;
 use std::cmp::{max, min};
 use std::default::Default;
 use std::rc::{Rc, Weak};
+use std::sync::Arc;
 use std::sync::atomic::AtomicUsize;
-use std::sync::oneshot::Receiver;
-use std::sync::{Arc, oneshot};
+use std::sync::mpsc::{self, Receiver};
 
 pub trait ImageHandler {
     fn handle(
@@ -447,10 +447,10 @@ impl Widget for &mut $tool {
                             );
                             ui.add(&mut annotation);
                         }
-                        Err(oneshot::TryRecvError::Empty(rx)) => {
-                            self.background_image_receiver = Some(rx);
+                        Err(mpsc::TryRecvError::Empty) => {
+                            self.background_image_receiver = Some(background_image_receiver);
                         }
-                        Err(oneshot::TryRecvError::Disconnected) => {
+                        Err(mpsc::TryRecvError::Disconnected) => {
                             error!("Failed to receive background image");
                         }
                     }
@@ -490,10 +490,10 @@ impl Widget for &mut $tool {
                                 .borrow_mut()
                                 .submit_annotation(annotation.into());
                         }
-                        Err(oneshot::TryRecvError::Empty(rx)) => {
-                            self.background_image_receiver = Some(rx);
+                        Err(mpsc::TryRecvError::Empty) => {
+                            self.background_image_receiver = Some(background_image_receiver);
                         }
-                        Err(oneshot::TryRecvError::Disconnected) => {
+                        Err(mpsc::TryRecvError::Disconnected) => {
                             error!("Failed to receive background image");
                         }
                     }
@@ -527,7 +527,7 @@ impl BackgroundImageProvider for OriginalBackgroundImageProvider {
         _: f32,
     ) -> Receiver<Arc<RgbaImage>> {
         let image = annotator_state.background_image.clone();
-        let (sender, receiver) = oneshot::channel::<Arc<RgbaImage>>();
+        let (sender, receiver) = mpsc::channel::<Arc<RgbaImage>>();
         sender.send(image).unwrap();
         receiver
     }
@@ -553,7 +553,7 @@ impl BackgroundImageProvider for BackgroundImageWithAnnotationsProvider {
         let annotations = annotator_state.annotations_stack.clone();
 
         if annotations.is_empty() {
-            let (sender, receiver) = oneshot::channel();
+            let (sender, receiver) = mpsc::channel();
             let _ = sender.send(original_background_image);
             return receiver;
         }

@@ -39,7 +39,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::Arc;
-use std::sync::oneshot::Receiver;
+use std::sync::mpsc::Receiver;
 
 /// 线条类型（实线、虚线、点线）
 #[derive(Debug, PartialEq, Eq, Copy, Clone)]

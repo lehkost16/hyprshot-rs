@@ -1,5 +1,3 @@
-#![feature(oneshot_channel)]
-
 mod platform;
 mod ui;
 

@@ -12,8 +12,8 @@ use egui_wgpu::wgpu::{
 use egui_wgpu::{Renderer, RendererOptions};
 use image::{ImageBuffer, Rgba, RgbaImage};
 use log::error;
-use std::sync::oneshot::Receiver;
-use std::sync::{Arc, oneshot};
+use std::sync::Arc;
+use std::sync::mpsc::{self, Receiver};
 use std::thread::spawn;
 
 pub type BuildUI = Box<dyn FnOnce(RawInput, &mut egui::Context) -> FullOutput>;
@@ -148,7 +148,7 @@ impl EguiOffScreenRender {
         // 提交命令
         queue.submit(Some(encoder.finish()));
 
-        let (sender, receiver) = oneshot::channel();
+        let (sender, receiver) = mpsc::channel();
         spawn(move || {
             let image = Self::get_render_result(device, queue, texture);
             match sender.send(Arc::new(image)) {
@@ -215,7 +215,7 @@ impl EguiOffScreenRender {
         queue.submit(Some(encoder.finish()));
 
         let buffer_slice = buffer.slice(..);
-        let (tx, rx) = oneshot::channel();
+        let (tx, rx) = mpsc::channel();
         buffer_slice.map_async(MapMode::Read, move |result| {
             tx.send(result).unwrap();
         });

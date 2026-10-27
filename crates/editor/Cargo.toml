@@ -15,24 +15,24 @@ wayland-client = {version = "0.31.11", features = ["log"]}
 wayland-backend = { version = "0.3", features = ["client_system"] }
 wayland-sys = "0.31"
 wayland-protocols = {version = "0.32.9", features = ["client"]}
-log = "0.4.29"
-image = "0.25.9"
-anyhow = "1.0.100"
-notify-rust = "4.11"
+log = "0.4"
+image = "0.25"
+anyhow = "1.0"
+notify-rust = "4.18"
 wgpu = {version = "29"}
-pollster = "1.0.1"
+pollster = "1.0"
 egui-wgpu = { version = "0.35.0", features = ["wayland"] }
 egui = "0.35.0"
 raw-window-handle = "0.6.2"
-rustc-hash = "2.1.1"
+rustc-hash = "2.1"
 egui_extras = {version = "0.35.0", features = ["svg"]}
-indexmap = "2.13.0"
-imageproc = "0.27.0"
-spire_enum = "1.0.0"
-delegate = "0.13.5"
-taffy = "0.12.2"
+indexmap = "2.14"
+imageproc = "0.27"
+spire_enum = "1.2"
+delegate = "0.13"
+taffy = "0.12"
 smithay-clipboard = {git = "https://github.com/FengZhongShaoNian/smithay-clipboard.git", branch = "mime-types"}
-rfd = "0.17.2"
+rfd = "0.17"
 
 [dev-dependencies]
-tempfile = "3.10"
+tempfile = "3.27"

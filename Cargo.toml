@@ -19,24 +19,24 @@ resolver = "3"
 [dependencies]
 hyshot-core = { path = "crates/core" }
 hyshot-editor = { path = "crates/editor" }
-clap = { version = "4.5", features = ["derive"] }
+clap = { version = "4.6", features = ["derive"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 toml = "1.0"
-notify-rust = "4.11"
+notify-rust = "4.18"
 anyhow = "1.0"
-env_logger = "0.11.8"
+env_logger = "0.11"
 libc = "0.2"
-dirs = "6.0"
+dirs = "7.0"
 directories = "6.0"
 chrono = "0.4"
 dialoguer = "0.12"
 grim-rs = { version = "0.2", optional = true }
 memmap2 = { version = "0.9", optional = true }
-tempfile = "3.10"
+tempfile = "3.27"
 slurp-rs = "0.2.0"
 image = "0.25"
-rayon = "1.10.0"
+rayon = "1.12"
 
 [dependencies.wayland-client]
 version = "0.31"

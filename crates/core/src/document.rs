@@ -65,7 +65,7 @@ impl ImageDocument {
         limits.max_alloc = Some(MAX_IMAGE_BYTES.min(budget));
         reader.limits(limits);
         // Validate the eventual RGBA allocation before converting RGB/gray input.
-        let decoder = reader
+        let mut decoder = reader
             .into_decoder()
             .context("Failed to decode image header")?;
         use image::ImageDecoder;
@@ -75,7 +75,15 @@ impl ImageDocument {
             u64::from(width) * u64::from(height) * 4 <= budget,
             "Images exceed the shared editor RGBA memory budget"
         );
-        let pixels = image::DynamicImage::from_decoder(decoder)?.into_rgba8();
+        // Smartphone JPEGs commonly store landscape pixels plus an EXIF rotation
+        // tag. Normalize the decoded buffer once so display, annotations, and
+        // exported images all share the same orientation.
+        let orientation = decoder
+            .orientation()
+            .context("Failed to read image orientation")?;
+        let mut decoded = image::DynamicImage::from_decoder(decoder)?;
+        decoded.apply_orientation(orientation);
+        let pixels = decoded.into_rgba8();
         Self::new(pixels, source)
     }
 
@@ -117,6 +125,7 @@ fn validate_size(width: u32, height: u32) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use image::GenericImageView;
 
     #[test]
     fn source_pixels_and_fractional_capture_scale_remain_independent() {
@@ -145,5 +154,16 @@ mod tests {
             .unwrap();
         assert!(ImageDocument::from_file_with_budget(&path, 399).is_err());
         assert!(ImageDocument::from_file(&path).is_ok());
+    }
+
+    #[test]
+    fn applies_exif_rotation_before_storing_pixels() {
+        let mut image = image::DynamicImage::ImageRgba8(RgbaImage::from_pixel(
+            4,
+            2,
+            image::Rgba([12, 34, 56, 255]),
+        ));
+        image.apply_orientation(image::metadata::Orientation::Rotate90);
+        assert_eq!(image.dimensions(), (2, 4));
     }
 }

@@ -10,6 +10,13 @@ pub fn screenshot_texture_options() -> TextureOptions {
     TextureOptions::NEAREST
 }
 
+pub fn preview_texture_options() -> TextureOptions {
+    TextureOptions {
+        minification: egui::TextureFilter::Linear,
+        ..TextureOptions::NEAREST
+    }
+}
+
 #[cfg(test)]
 mod tests {
     #[test]

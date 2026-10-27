@@ -66,7 +66,7 @@ pub fn create_annotator_panel(
                     let texture_handle = egui_ctx.load_texture(
                         "background-image",
                         egui::ImageData::Color(background_image),
-                        crate::texture::screenshot_texture_options(),
+                        crate::texture::preview_texture_options(),
                     );
 
                     let renderer = Arc::new(EguiOffScreenRender::new(

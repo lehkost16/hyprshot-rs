@@ -411,6 +411,7 @@ impl AppWindow {
         let config = SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
             format: surface_format,
+            color_space: wgpu::SurfaceColorSpace::Auto,
 
             // width 和 height 指定 SurfaceTexture 的宽度和高度（物理像素，等于逻辑像素乘以屏幕缩放因子）
             width: surface_size.width,
@@ -894,6 +895,7 @@ impl AppWindow {
             OutputCommand::OpenUrl(_) => {
                 todo!("Open url output command not yet implemented");
             }
+            OutputCommand::TextSelectionSettled(_) => {}
         });
     }
 

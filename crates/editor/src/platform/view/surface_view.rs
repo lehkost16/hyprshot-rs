@@ -190,7 +190,7 @@ impl<'window> View for SurfaceView<'window> {
             self.surface.commit();
             return None;
         }
-        let egui_output = self.run_egui(app, window);
+        let mut egui_output = self.run_egui(app, window);
 
         // 获取当前帧纹理
         let frame = match self.wgpu_surface.get_current_texture() {
@@ -237,8 +237,10 @@ impl<'window> View for SurfaceView<'window> {
             .as_ref()
             .unwrap()
             .tessellate(egui_output.shapes, egui_output.pixels_per_point);
-        for (id, image_delta) in &egui_output.textures_delta.set {
-            egui_renderer.update_texture(device, &gpu.queue, *id, image_delta);
+        for (id, deltas) in &egui_output.textures_delta.set {
+            for image_delta in deltas {
+                egui_renderer.update_texture(device, &gpu.queue, *id, image_delta);
+            }
         }
 
         // 更新EGUI顶点/索引缓冲区
@@ -281,7 +283,7 @@ impl<'window> View for SurfaceView<'window> {
         gpu.queue.submit(std::iter::once(encoder.finish()));
 
         // 提交缓冲区到表面
-        frame.present();
+        gpu.queue.present(frame);
 
         // 请求frame回调以确保持续渲染
         self.surface.frame(
@@ -293,6 +295,7 @@ impl<'window> View for SurfaceView<'window> {
         for id in &egui_output.textures_delta.free {
             egui_renderer.free_texture(id);
         }
+        egui_output.textures_delta.clear();
 
         Some(egui_output.platform_output)
     }

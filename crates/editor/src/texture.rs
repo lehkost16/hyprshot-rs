@@ -31,7 +31,7 @@ mod tests {
                 super::screenshot_texture_options(),
             );
             assert_eq!(initial_texture.size(), size);
-            let _ = context.run_ui(input, |ui| {
+            let mut output = context.run_ui(input, |ui| {
                 let ctx = ui.ctx();
                 assert_eq!(ctx.input(|i| i.max_texture_side), 4096);
                 let texture = ctx.load_texture(
@@ -41,6 +41,7 @@ mod tests {
                 );
                 assert_eq!(texture.size(), size);
             });
+            output.textures_delta.clear();
         }
     }
 }

@@ -188,7 +188,7 @@ pub fn create_secondly_toolbar(
 
                                         if supports_set_stroke_type {
                                             create_stroke_type_selector(
-                                                Id::from("stroke-type-selector"),
+                                                Id::unique("stroke-type-selector"),
                                                 app,
                                                 window,
                                                 current_view,
@@ -200,7 +200,7 @@ pub fn create_secondly_toolbar(
                                         // 笔触宽度下拉
                                         if supports_set_stroke_width {
                                             create_stroke_width_selector(
-                                                Id::from("stroke-width-selector"),
+                                                Id::unique("stroke-width-selector"),
                                                 app,
                                                 window,
                                                 current_view,

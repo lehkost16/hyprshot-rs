@@ -338,7 +338,7 @@ pub trait WheelHandler {
                 let step_threshold = 9f32;
                 let value = memory
                     .data
-                    .get_temp_mut_or_default::<f32>(Id::from("wheel-scroll-value-accumulate"));
+                    .get_temp_mut_or_default::<f32>(Id::unique("wheel-scroll-value-accumulate"));
                 *value += scroll_delta;
 
                 while *value >= step_threshold {
@@ -983,7 +983,7 @@ impl AnnotatorState {
     }
 
     pub fn extra_zoom_factor_id() -> Id {
-        "extra-zoom-factor".into()
+        Id::unique("extra-zoom-factor")
     }
 
     pub fn activate_annotation_tool(&mut self, tool_name: ToolName) {

@@ -44,7 +44,7 @@ impl EguiInput {
                         pos,
                         button: egui_button,
                         pressed: true,
-                        modifiers: self.raw.modifiers,
+                        modifiers: self.modifiers,
                     });
                 }
             }
@@ -54,7 +54,7 @@ impl EguiInput {
                         pos,
                         button: egui_button,
                         pressed: false,
-                        modifiers: self.raw.modifiers,
+                        modifiers: self.modifiers,
                     });
                 }
             }
@@ -70,13 +70,14 @@ impl EguiInput {
                 log::info!(
                     "[DEBUG] EguiInput Axis event: delta={:?}, ctrl={}",
                     delta,
-                    self.raw.modifiers.ctrl
+                    self.modifiers.ctrl
                 );
                 self.raw.events.push(Event::MouseWheel {
                     unit: egui::MouseWheelUnit::Point,
                     delta,
                     phase: egui::TouchPhase::Move,
-                    modifiers: self.raw.modifiers,
+                    modifiers: self.modifiers,
+                    source: egui::MouseWheelSource::Unknown,
                 });
             }
         }
@@ -87,8 +88,6 @@ impl EguiInput {
         if is_ctrl_keysym(raw_keysym) {
             self.modifiers.ctrl = pressed;
             self.modifiers.command = pressed;
-            self.raw.modifiers.ctrl = pressed;
-            self.raw.modifiers.command = pressed;
         }
 
         if let Some(key) = map_keysym(event.keysym) {
@@ -148,7 +147,6 @@ impl EguiInput {
             command: modifiers.ctrl || modifiers.logo,
         };
         self.modifiers = modifiers;
-        self.raw.modifiers = modifiers;
     }
 }
 

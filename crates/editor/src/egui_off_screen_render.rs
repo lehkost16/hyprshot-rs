@@ -79,7 +79,7 @@ impl EguiOffScreenRender {
             &mut raw_input,
             self.device.limits().max_texture_dimension_2d,
         );
-        let full_output = build_ui(raw_input, &mut egui_ctx);
+        let mut full_output = build_ui(raw_input, &mut egui_ctx);
 
         // 更新纹理
         // 将给定形状镶嵌成三角形网格
@@ -94,9 +94,15 @@ impl EguiOffScreenRender {
         let queue = self.queue.clone();
 
         let mut renderer = self.create_egui_wgpu_renderer();
-        for (id, image_delta) in &full_output.textures_delta.set {
-            renderer.update_texture(&device, &queue, *id, image_delta);
+        for (id, deltas) in &full_output.textures_delta.set {
+            for image_delta in deltas {
+                renderer.update_texture(&device, &queue, *id, image_delta);
+            }
         }
+        for id in &full_output.textures_delta.free {
+            renderer.free_texture(id);
+        }
+        full_output.textures_delta.clear();
 
         // 创建命令编码器
         let mut encoder = device.create_command_encoder(&CommandEncoderDescriptor::default());
@@ -216,7 +222,9 @@ impl EguiOffScreenRender {
         device.poll(PollType::wait_indefinitely()).unwrap();
 
         if let Ok(Ok(())) = rx.recv() {
-            let padded_data = buffer_slice.get_mapped_range();
+            let padded_data = buffer_slice
+                .get_mapped_range()
+                .expect("failed to map buffer");
             let pixels_bgra = padded_data
                 .chunks(padded_bytes_per_row as _)
                 .flat_map(|chunk| &chunk[..unpadded_bytes_per_row as _])

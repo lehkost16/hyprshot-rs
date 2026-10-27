@@ -62,7 +62,7 @@ pub(crate) fn primary_controls(
 
     if ui
         .add(SvgButton::new(
-            "rectangle-tool".into(),
+            "rectangle-tool",
             Icons::DrawRectangle.get_image(),
             LogicalSize::new(28., 28.),
             false,
@@ -81,7 +81,7 @@ pub(crate) fn primary_controls(
 
     if ui
         .add(SvgButton::new(
-            "ellipse-tool".into(),
+            "ellipse-tool",
             Icons::DrawEllipse.get_image(),
             LogicalSize::new(28., 28.),
             false,
@@ -100,7 +100,7 @@ pub(crate) fn primary_controls(
 
     if ui
         .add(SvgButton::new(
-            "straight-line-tool".into(),
+            "straight-line-tool",
             Icons::DrawLine.get_image(),
             LogicalSize::new(28., 28.),
             false,
@@ -118,7 +118,7 @@ pub(crate) fn primary_controls(
     }
     if ui
         .add(SvgButton::new(
-            "arrow-tool".into(),
+            "arrow-tool",
             Icons::DrawArrow.get_image(),
             LogicalSize::new(28., 28.),
             false,
@@ -137,7 +137,7 @@ pub(crate) fn primary_controls(
 
     if ui
         .add(SvgButton::new(
-            "pencil-tool".into(),
+            "pencil-tool",
             Icons::DrawFreehand.get_image(),
             LogicalSize::new(28., 28.),
             false,
@@ -156,7 +156,7 @@ pub(crate) fn primary_controls(
 
     if ui
         .add(SvgButton::new(
-            "marker-pen-tool".into(),
+            "marker-pen-tool",
             Icons::DrawHighlight.get_image(),
             LogicalSize::new(28., 28.),
             false,
@@ -175,7 +175,7 @@ pub(crate) fn primary_controls(
 
     if ui
         .add(SvgButton::new(
-            "mosaic-tool".into(),
+            "mosaic-tool",
             Icons::PixelArtTrace.get_image(),
             LogicalSize::new(28., 28.),
             false,
@@ -194,7 +194,7 @@ pub(crate) fn primary_controls(
 
     if ui
         .add(SvgButton::new(
-            "blur-tool".into(),
+            "blur-tool",
             Icons::BlurFx.get_image(),
             LogicalSize::new(28., 28.),
             false,
@@ -213,7 +213,7 @@ pub(crate) fn primary_controls(
 
     if ui
         .add(SvgButton::new(
-            "text-tool".into(),
+            "text-tool",
             Icons::DrawText.get_image(),
             LogicalSize::new(28., 28.),
             false,
@@ -232,7 +232,7 @@ pub(crate) fn primary_controls(
 
     if ui
         .add(SvgButton::new(
-            "serial-number-tool".into(),
+            "serial-number-tool",
             Icons::DrawNumber.get_image(),
             LogicalSize::new(28., 28.),
             false,
@@ -251,7 +251,7 @@ pub(crate) fn primary_controls(
 
     if ui
         .add(SvgButton::new(
-            "eraser-tool".into(),
+            "eraser-tool",
             Icons::DrawEraser.get_image(),
             LogicalSize::new(28., 28.),
             false,
@@ -270,7 +270,7 @@ pub(crate) fn primary_controls(
 
     if ui
         .add(SvgButton::new(
-            "undo-tool".into(),
+            "undo-tool",
             Icons::EditUndo.get_image(),
             LogicalSize::new(28., 28.),
             !state.can_undo(),
@@ -285,7 +285,7 @@ pub(crate) fn primary_controls(
 
     if ui
         .add(SvgButton::new(
-            "redo-tool".into(),
+            "redo-tool",
             Icons::EditRedo.get_image(),
             LogicalSize::new(28., 28.),
             !state.can_redo(),
@@ -300,7 +300,7 @@ pub(crate) fn primary_controls(
 
     if ui
         .add(SvgButton::new(
-            "reset-zoom-tool".into(),
+            "reset-zoom-tool",
             Icons::ZoomOriginal.get_image(),
             LogicalSize::new(28., 28.),
             false,
@@ -330,7 +330,7 @@ pub(crate) fn primary_controls(
 
     if ui
         .add(SvgButton::new(
-            "save-tool".into(),
+            "save-tool",
             Icons::DocumentSave.get_image(),
             LogicalSize::new(28., 28.),
             false,
@@ -352,7 +352,7 @@ pub(crate) fn primary_controls(
 
     if ui
         .add(SvgButton::new(
-            "copy-tool".into(),
+            "copy-tool",
             Icons::EditCopy.get_image(),
             LogicalSize::new(28., 28.),
             false,

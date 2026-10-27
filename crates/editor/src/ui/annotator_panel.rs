@@ -20,7 +20,9 @@ use crate::platform::dpi::{LogicalPosition, PhysicalSize};
 use crate::platform::view::ViewId;
 use crate::platform::window::AppWindow;
 use egui::load::SizedTexture;
-use egui::{Area, Color32, ColorImage, Frame, Image, ImageSource, Order, Rect, Sense, pos2, vec2};
+use egui::{
+    Area, Color32, ColorImage, Frame, Id, Image, ImageSource, Order, Rect, Sense, pos2, vec2,
+};
 use image::RgbaImage;
 use log::info;
 use std::cell::RefCell;
@@ -314,7 +316,7 @@ pub fn create_annotator_panel(
                             });
 
                         if annotator_state.borrow().current_annotation_tool.is_some() {
-                            Area::new("annotation_tool_area".into())
+                            Area::new(Id::unique("annotation_tool_area"))
                                 .fixed_pos(pos2(0., 0.))
                                 .order(Order::Middle)
                                 .movable(false)
@@ -455,7 +457,7 @@ fn show_toolbar_toggle(ui: &mut egui::Ui, panel_size: egui::Vec2, expanded: &mut
     } else {
         0.0
     };
-    Area::new("toolbar-toggle".into())
+    Area::new(Id::unique("toolbar-toggle"))
         .fixed_pos(pos2((panel_size.x - side - margin).max(0.0), margin))
         .order(Order::Foreground)
         .movable(false)
@@ -529,9 +531,10 @@ mod toolbar_toggle_tests {
                 events,
                 ..Default::default()
             };
-            let _ = ctx.run_ui(input, |ui| {
+            let mut output = ctx.run_ui(input, |ui| {
                 button = show_toolbar_toggle(ui, panel, expanded);
             });
+            output.textures_delta.clear();
             button
         };
         frame(vec![], &mut expanded);

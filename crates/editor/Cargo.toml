@@ -19,18 +19,17 @@ log = "0.4"
 image = "0.25"
 anyhow = "1.0"
 notify-rust = "4.18"
-wgpu = {version = "29"}
+wgpu = {version = "30"}
 pollster = "1.0"
-egui-wgpu = { version = "0.35.0", features = ["wayland"] }
-egui = "0.35.0"
+egui-wgpu = { version = "0.37.0", features = ["wayland"] }
+egui = "0.37.0"
 raw-window-handle = "0.6.2"
 rustc-hash = "2.1"
-egui_extras = {version = "0.35.0", features = ["svg"]}
+egui_extras = {version = "0.37.0", features = ["svg"]}
 indexmap = "2.14"
 imageproc = "0.27"
 spire_enum = "1.2"
 delegate = "0.13"
-taffy = "0.12"
 smithay-clipboard = {git = "https://github.com/FengZhongShaoNian/smithay-clipboard.git", branch = "mime-types"}
 rfd = "0.17"
 

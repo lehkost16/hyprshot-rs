@@ -19,7 +19,7 @@ pub struct SvgButton {
 
 impl SvgButton {
     pub fn new(
-        id: Id,
+        id: &str,
         image: Image<'static>,
         size: LogicalSize<f32>,
         disabled: bool,
@@ -27,7 +27,7 @@ impl SvgButton {
         checked: bool,
     ) -> Self {
         Self {
-            id,
+            id: Id::unique(id),
             image,
             size,
             disabled,

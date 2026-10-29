@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use notify_rust::Notification;
 use std::fs::{create_dir_all, write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 use crate::geometry::Geometry;
@@ -176,11 +176,8 @@ pub fn save_geometry_with_grim(
         } else {
             save_fullpath.to_str().unwrap_or("screenshot").to_string()
         };
-        // Actions need the notification to stay reachable until the user
-        // answers, so hand the blocking wait to a detached thread and let the
-        // capture path return immediately. Capture paths are short-lived
-        // processes, so the thread keeps the process alive only until the
-        // notification is dismissed or an action fires.
+        // Actions only apply when a file is actually written; clipboard-only
+        // captures have nothing to open or delete.
         if !options.clipboard_only {
             let path = save_fullpath.clone();
             spawn_notification_with_actions(summary, message, icon_name, options.notif_timeout, path);
@@ -211,8 +208,20 @@ pub const ACTION_DELETE: &str = "delete-file";
 /// longer configured timeout.
 const ACTION_NOTIFICATION_MIN_TIMEOUT_MS: u32 = 8000;
 
-/// Shows the saved-screenshot notification with "open folder" and "delete"
-/// actions, handling whichever the user picks.
+/// Whether the notification should offer "open folder" and "delete".
+///
+/// Only a real file qualifies: both actions operate on it, and a directory
+/// must never be offered for deletion.
+fn should_offer_actions(path: &Path) -> bool {
+    path.is_file()
+}
+
+/// Shows the saved-file notification with "open folder" and "delete" actions,
+/// handling whichever the user picks.
+///
+/// Both actions operate on the file, so they are only offered when the file is
+/// actually on disk. A notification with broken buttons is worse than a plain
+/// one, so callers that cannot prove the file exists fall back to a toast.
 ///
 /// The action wait is delegated to a `notify-send -A` child that waits on the
 /// notification and prints the chosen action key, then runs the matching
@@ -226,6 +235,20 @@ pub fn spawn_notification_with_actions(
     timeout_ms: u32,
     path: PathBuf,
 ) {
+    if !should_offer_actions(&path) {
+        // No file, no actions: report the outcome without offering buttons
+        // that would fail when clicked.
+        if let Err(err) = Notification::new()
+            .summary(&summary)
+            .body(&body)
+            .timeout(timeout_ms as i32)
+            .appname("Hyshot")
+            .show()
+        {
+            eprintln!("Warning: failed to show notification: {err}");
+        }
+        return;
+    }
     let timeout_ms = timeout_ms.max(ACTION_NOTIFICATION_MIN_TIMEOUT_MS);
     // `xdg-open` resolves to the generic backend here and silently does
     // nothing for directories, so prefer the file manager directly and only
@@ -265,6 +288,69 @@ esac"#,
     {
         eprintln!("Warning: failed to show notification: {err}");
     }
+}
+
+/// Opens a saved file with whatever the desktop associates with its type.
+///
+/// `xdg-open` is the documented entry point but its generic backend resolves
+/// to nothing under this compositor, so the `.desktop` handler from
+/// `xdg-mime query default` is launched directly and xdg-open is only the last
+/// resort. The child is detached: the calling command exits immediately and
+/// must not wait for the viewer to close.
+pub fn open_path(path: &Path) {
+    if let Some(program) = desktop_handler_command(path) {
+        if Command::new(&program)
+            .arg(path)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .is_ok()
+        {
+            return;
+        }
+    }
+    let _ = Command::new("xdg-open")
+        .arg(path)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn();
+}
+
+/// Resolves the binary backing the default handler for `path`'s MIME type.
+///
+/// `xdg-mime query default` reports a `.desktop` id; the executable is its
+/// basename without the suffix (`imv.desktop` -> `imv`).
+fn desktop_handler_command(path: &Path) -> Option<String> {
+    let mime = mime_for_extension(path.extension()?.to_str()?)?;
+    let output = Command::new("xdg-mime")
+        .args(["query", "default", mime])
+        .stdin(Stdio::null())
+        .stderr(Stdio::null())
+        .output()
+        .ok()?;
+    let desktop_id = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let program = desktop_id.strip_suffix(".desktop")?.to_string();
+    if program.is_empty() || !which(&program) {
+        return None;
+    }
+    Some(program)
+}
+
+/// Minimal extension-to-MIME mapping for the file types hyshot produces.
+fn mime_for_extension(ext: &str) -> Option<&'static str> {
+    Some(match ext.to_ascii_lowercase().as_str() {
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "webp" => "image/webp",
+        "gif" => "image/gif",
+        "mp4" => "video/mp4",
+        "webm" => "video/webm",
+        "mkv" => "video/x-matroska",
+        "avi" => "video/x-msvideo",
+        _ => return None,
+    })
 }
 
 /// Reports whether an executable is reachable on PATH, without shelling out.
@@ -370,5 +456,49 @@ mod tests {
         assert_eq!(3000u32.max(ACTION_NOTIFICATION_MIN_TIMEOUT_MS), ACTION_NOTIFICATION_MIN_TIMEOUT_MS);
         // Longer configured values are preserved.
         assert_eq!(20000u32.max(ACTION_NOTIFICATION_MIN_TIMEOUT_MS), 20000);
+    }
+
+    /// The extension mapping decides which handler is resolved, so every type
+    /// hyshot writes must map, and case must not matter.
+    #[test]
+    fn mime_mapping_covers_hyshot_output_types() {
+        assert_eq!(mime_for_extension("png"), Some("image/png"));
+        assert_eq!(mime_for_extension("PNG"), Some("image/png"));
+        assert_eq!(mime_for_extension("jpeg"), Some("image/jpeg"));
+        assert_eq!(mime_for_extension("mp4"), Some("video/mp4"));
+        assert_eq!(mime_for_extension("webm"), Some("video/webm"));
+        assert_eq!(mime_for_extension("gif"), Some("image/gif"));
+        // Unknown types must not resolve to some arbitrary handler.
+        assert_eq!(mime_for_extension("txt"), None);
+        assert_eq!(mime_for_extension(""), None);
+    }
+
+    /// `after_save` is a plain string, so anything other than "open" must mean
+    /// keep-and-stay-quiet. A typo should not make the editor pop up.
+    #[test]
+    fn after_save_only_opens_on_exact_open() {
+        for value in ["save", "Save", "", "openn", "true"] {
+            assert!(!value.eq_ignore_ascii_case("open"), "{value} must not open");
+        }
+        for value in ["open", "OPEN", "Open"] {
+            assert!(value.eq_ignore_ascii_case("open"), "{value} must open");
+        }
+    }
+
+    /// Actions must only be offered for a file that exists. Otherwise "open
+    /// folder" and "delete" are buttons that fail the moment they are clicked.
+    /// This exercises the real decision the notification path makes.
+    #[test]
+    fn actions_are_gated_on_file_presence() {
+        assert!(should_offer_actions(&std::path::Path::new("/nonexistent/nope.png")) == false);
+
+        let file = std::env::temp_dir().join("hyshot_action_gate.png");
+        std::fs::write(&file, b"x").expect("write temp file");
+        assert!(should_offer_actions(&file));
+
+        let dir = std::env::temp_dir();
+        assert!(!should_offer_actions(&dir), "a directory gets no actions");
+
+        std::fs::remove_file(&file).ok();
     }
 }

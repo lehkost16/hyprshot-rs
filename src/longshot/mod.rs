@@ -82,13 +82,13 @@ pub fn handle_longshot(args: &Args, config: &config::Config, edit: bool) -> Resu
 
                 // Send success notification
                 if !silent {
-                    let _ = Notification::new()
-                        .summary("✅ Longshot 已生成")
-                        .body(&format!("图片已保存至: {}", state.output_path))
-                        .icon(&state.output_path)
-                        .timeout(notif_timeout as i32)
-                        .appname("Shot")
-                        .show();
+                    crate::save::spawn_notification_with_actions(
+                        "✅ Longshot 已生成".to_string(),
+                        format!("图片已保存至: {}", state.output_path),
+                        state.output_path.clone(),
+                        notif_timeout,
+                        std::path::PathBuf::from(&state.output_path),
+                    );
                 }
 
                 // Clean up temp video file
@@ -109,8 +109,13 @@ pub fn handle_longshot(args: &Args, config: &config::Config, edit: bool) -> Resu
                     );
                 }
                 drop(_lock);
+                // Opening the editor takes precedence over the viewer: both at
+                // once would show the same image twice.
                 if state.edit_on_finish || edit {
                     return edit_stitched(image, Path::new(&state.output_path), args, config);
+                }
+                if config.longshot.after_save.eq_ignore_ascii_case("open") {
+                    crate::save::open_path(Path::new(&state.output_path));
                 }
             }
             Err(err) => {
@@ -215,7 +220,7 @@ pub fn handle_longshot(args: &Args, config: &config::Config, edit: bool) -> Resu
                 .summary("🔴 Longshot 录制中")
                 .body("滚动页面完成后，再次运行命令停止录制并拼接")
                 .timeout(notif_timeout as i32)
-                .appname("Shot")
+                .appname("Hyshot")
                 .show();
         }
 
@@ -261,6 +266,10 @@ pub fn handle_stitch(
 
     if let Err(error) = copy_png(&output_path) {
         eprintln!("Longshot saved, but clipboard copy failed: {error:#}");
+    }
+
+    if config.longshot.after_save.eq_ignore_ascii_case("open") {
+        crate::save::open_path(&output_path);
     }
 
     if !silent {

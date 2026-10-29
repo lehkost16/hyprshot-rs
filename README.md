@@ -120,6 +120,7 @@ fps = 12
 sad_threshold = 8.0
 max_skip = 6
 target_overlap = 0.30
+after_save = "save" # "save" keeps the image, "open" also opens it
 
 [record]
 hide_cursor = true
@@ -128,6 +129,7 @@ quality = "balanced" # compact, balanced, high
 audio = false
 save_dir = "~/Videos/Screenrecords"
 format = "mp4"
+after_save = "save" # "save" keeps the video, "open" also opens it
 ```
 
 ## Desktop entry

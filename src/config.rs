@@ -123,6 +123,12 @@ pub struct LongshotConfig {
     /// Default: 0.30
     #[serde(default = "default_longshot_target_overlap")]
     pub target_overlap: f32,
+
+    /// What to do once the stitched image is written: "save" keeps it on disk
+    /// silently, "open" also opens it in the default image viewer.
+    /// Default: "save"
+    #[serde(default = "default_after_save")]
+    pub after_save: String,
 }
 
 // Default value functions for serde
@@ -136,6 +142,10 @@ fn default_screenshots_dir() -> String {
 
 fn default_notification() -> bool {
     true
+}
+
+fn default_after_save() -> String {
+    "save".to_string()
 }
 
 fn default_notification_timeout() -> u32 {
@@ -276,6 +286,11 @@ pub struct RecordConfig {
         skip_serializing_if = "Vec::is_empty"
     )]
     pub command_args: Vec<String>,
+    /// What to do once the recording is finalized: "save" keeps it on disk
+    /// silently, "open" also opens it in the default video player.
+    /// Default: "save"
+    #[serde(default = "default_after_save")]
+    pub after_save: String,
 }
 
 impl RecordConfig {
@@ -370,6 +385,7 @@ impl Default for RecordConfig {
             format: default_record_format(),
             hwaccel: default_record_hwaccel(),
             command_args: default_record_command_args(),
+            after_save: default_after_save(),
         }
     }
 }
@@ -403,6 +419,7 @@ impl Default for LongshotConfig {
             sad_threshold: default_longshot_sad_threshold(),
             max_skip: default_longshot_max_skip(),
             target_overlap: default_longshot_target_overlap(),
+            after_save: default_after_save(),
         }
     }
 }

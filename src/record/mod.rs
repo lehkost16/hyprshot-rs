@@ -63,6 +63,9 @@ pub fn handle_record(args: &Args, config: &config::Config) -> Result<()> {
         fs::remove_file(&state_file).context("Cannot remove completed recording state")?;
         let final_path = &state.video_path;
         let copied = copy_path(final_path);
+        if config.record.after_save.eq_ignore_ascii_case("open") {
+            crate::save::open_path(Path::new(final_path));
+        }
         if !silent {
             let body = format!(
                 "视频已保存至: {}{}",
@@ -188,7 +191,7 @@ pub fn handle_record(args: &Args, config: &config::Config) -> Result<()> {
                 .summary("🎥 录屏中")
                 .body("再次运行命令停止录像")
                 .timeout(notif_timeout as i32)
-                .appname("Shot")
+                .appname("Hyshot")
                 .show();
         }
 

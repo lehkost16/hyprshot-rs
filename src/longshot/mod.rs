@@ -61,7 +61,7 @@ pub fn handle_longshot(args: &Args, config: &config::Config) -> Result<()> {
                 .summary("Stitching...")
                 .body("正在进行长截图拼接，请稍候...")
                 .timeout(3000)
-                .appname("Shot")
+                .appname("Hyshot")
                 .show();
         }
 
@@ -119,8 +119,13 @@ pub fn handle_longshot(args: &Args, config: &config::Config) -> Result<()> {
                 }
             }
             Err(err) => {
-                state.session.phase = Phase::Failed;
-                capture_session::write_state(&state_file, &state)?;
+                // The stitched PNG was never published, so this session has no
+                // way to succeed on a retry: stitch_video writes with
+                // persist_noclobber, which would fail again on the same output
+                // path. Clearing the state file lets the next hotkey press
+                // start a fresh capture instead of replaying this failure
+                // forever. The source recording is kept for manual stitching.
+                let _ = fs::remove_file(&state_file);
                 if !silent {
                     let _ = Notification::new()
                         .summary("Longshot error")
@@ -129,7 +134,7 @@ pub fn handle_longshot(args: &Args, config: &config::Config) -> Result<()> {
                             err, state.video_path
                         ))
                         .timeout(notif_timeout as i32)
-                        .appname("Shot")
+                        .appname("Hyshot")
                         .show();
                 }
                 return Err(err)
@@ -256,7 +261,7 @@ pub fn handle_stitch(
             .summary("Stitching video...")
             .body(&format!("{} → {}", input.display(), output_path.display()))
             .timeout(3000)
-            .appname("Shot")
+            .appname("Hyshot")
             .show();
     }
 

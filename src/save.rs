@@ -43,7 +43,7 @@ pub fn save_geometry_with_grim(
     }
 
     if !options.clipboard_only {
-        create_dir_all(save_fullpath.parent().unwrap())
+        create_dir_all(save_fullpath.parent().unwrap_or(Path::new(".")))
             .context("Failed to create screenshot directory")?;
 
         write(save_fullpath, &image_bytes).context(format!(
@@ -111,9 +111,12 @@ pub fn save_geometry_with_grim(
                     .show();
             }
         } else {
+            // The template is a shell command, so the substituted path must be
+            // quoted: a screenshot directory or filename containing a quote or
+            // `$(...)` would otherwise be interpreted by the shell.
             let cmd_str = options
                 .upload_command
-                .replace("{path}", &save_fullpath.to_string_lossy());
+                .replace("{path}", &shell_quote(&save_fullpath.to_string_lossy()));
             if options.debug {
                 eprintln!("Running upload command: {}", cmd_str);
             }
@@ -298,8 +301,9 @@ esac"#,
 /// resort. The child is detached: the calling command exits immediately and
 /// must not wait for the viewer to close.
 pub fn open_path(path: &Path) {
-    if let Some(program) = desktop_handler_command(path) {
+    if let Some((program, args)) = desktop_handler_command(path) {
         if Command::new(&program)
+            .args(&args)
             .arg(path)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
@@ -318,11 +322,15 @@ pub fn open_path(path: &Path) {
         .spawn();
 }
 
-/// Resolves the binary backing the default handler for `path`'s MIME type.
+/// Resolves the command backing the default handler for `path`'s MIME type.
 ///
-/// `xdg-mime query default` reports a `.desktop` id; the executable is its
-/// basename without the suffix (`imv.desktop` -> `imv`).
-fn desktop_handler_command(path: &Path) -> Option<String> {
+/// `xdg-mime query default` reports a `.desktop` id; that file's `Exec=` line
+/// holds the actual command line, which may carry required arguments
+/// (`mpv --player-operation-mode=pseudo-gui -- %U`). Running the basename alone
+/// would drop them and silently change how the program starts, so the `Exec`
+/// line is parsed and its field codes stripped. Falls back to the basename when
+/// the desktop file cannot be read.
+fn desktop_handler_command(path: &Path) -> Option<(String, Vec<String>)> {
     let mime = mime_for_extension(path.extension()?.to_str()?)?;
     let output = Command::new("xdg-mime")
         .args(["query", "default", mime])
@@ -335,7 +343,59 @@ fn desktop_handler_command(path: &Path) -> Option<String> {
     if program.is_empty() || !which(&program) {
         return None;
     }
-    Some(program)
+
+    // Prefer the real Exec line; the basename alone is the last resort.
+    let args = desktop_exec_args(&desktop_id).unwrap_or_default();
+    Some((program, args))
+}
+
+/// Reads the `Exec=` line of a `.desktop` file and returns its arguments.
+///
+/// Field codes (`%U`, `%F`, `%f`, `%u`) are dropped: the caller always appends
+/// the concrete path itself. `%U`/`%F` expand to the file list, so keeping them
+/// would pass the path twice.
+fn desktop_exec_args(desktop_id: &str) -> Option<Vec<String>> {
+    let data_dirs = std::env::var("XDG_DATA_DIRS")
+        .unwrap_or_else(|_| "/usr/local/share:/usr/share".to_string());
+    let mut search: Vec<PathBuf> = vec![PathBuf::from("/usr/share/applications")];
+    for dir in data_dirs.split(':').filter(|d| !d.is_empty()) {
+        search.push(PathBuf::from(dir).join("applications"));
+    }
+    if let Some(home) = std::env::var_os("HOME") {
+        search.insert(0, PathBuf::from(home).join(".local/share/applications"));
+    }
+
+    for dir in search {
+        let candidate = dir.join(desktop_id);
+        let Ok(contents) = std::fs::read_to_string(&candidate) else {
+            continue;
+        };
+        let Some(exec) = contents
+            .lines()
+            .find_map(|line| line.strip_prefix("Exec="))
+        else {
+            continue;
+        };
+        return Some(desktop_exec_tokens(exec));
+    }
+    None
+}
+
+/// Splits an `Exec=` value into arguments.
+///
+/// The first token is the program itself, already launched separately, so it is
+/// dropped. Field codes expand to the file list, which the caller supplies.
+fn desktop_exec_tokens(exec: &str) -> Vec<String> {
+    exec.split_whitespace()
+        .filter(|token| !is_desktop_field_code(token))
+        .skip(1)
+        .map(str::to_string)
+        .collect()
+}
+
+/// Whether a token is a `.desktop` field code (`%U`, `%F`, `%i`, ...).
+fn is_desktop_field_code(token: &str) -> bool {
+    matches!(token, "%f" | "%F" | "%u" | "%U" | "%i" | "%c" | "%k" | "%%")
 }
 
 /// Minimal extension-to-MIME mapping for the file types hyshot produces.
@@ -353,13 +413,29 @@ fn mime_for_extension(ext: &str) -> Option<&'static str> {
     })
 }
 
+/// Reports whether a file has any execute bit set.
+#[cfg(unix)]
+fn is_executable(path: &Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    path.metadata()
+        .map(|meta| meta.permissions().mode() & 0o111 != 0)
+        .unwrap_or(false)
+}
+
+#[cfg(not(unix))]
+fn is_executable(path: &Path) -> bool {
+    path.is_file()
+}
+
 /// Reports whether an executable is reachable on PATH, without shelling out.
 fn which(program: &str) -> bool {
     std::env::var_os("PATH")
         .map(|paths| {
             std::env::split_paths(&paths).any(|dir| {
                 let candidate = dir.join(program);
-                candidate.is_file()
+                // A file that is not executable would make spawn() fail after
+                // we had already committed to this handler.
+                candidate.is_file() && is_executable(&candidate)
             })
         })
         .unwrap_or(false)
@@ -500,5 +576,53 @@ mod tests {
         assert!(!should_offer_actions(&dir), "a directory gets no actions");
 
         std::fs::remove_file(&file).ok();
+    }
+
+    /// The upload template is a shell command; an unquoted path containing a
+    /// quote would let the rest of the filename run as a command.
+    #[test]
+    fn shell_quote_neutralises_metacharacters() {
+        let quoted = shell_quote("/tmp/a'b;$(rm -rf /).png");
+        assert_eq!(quoted, r"'/tmp/a'\''b;$(rm -rf /).png'");
+        // The escaped form must round-trip back to the original single word.
+        let output = std::process::Command::new("sh")
+            .arg("-c")
+            .arg(format!("printf %s {quoted}"))
+            .output()
+            .unwrap();
+        assert_eq!(
+            String::from_utf8_lossy(&output.stdout),
+            "/tmp/a'b;$(rm -rf /).png"
+        );
+    }
+
+    /// `Exec=` may carry required arguments; dropping them changes how the
+    /// viewer starts. Field codes are removed because the caller appends the
+    /// path itself.
+    #[test]
+    fn desktop_exec_args_are_parsed_and_field_codes_dropped() {
+        assert_eq!(
+            desktop_exec_tokens("mpv --player-operation-mode=pseudo-gui -- %U"),
+            vec!["--player-operation-mode=pseudo-gui", "--"]
+        );
+        assert_eq!(desktop_exec_tokens("imv %F"), Vec::<String>::new());
+        assert_eq!(desktop_exec_tokens("eog %U"), Vec::<String>::new());
+    }
+
+    /// A handler that is not executable must not be selected: spawn would fail
+    /// after we had already committed to it.
+    #[test]
+    fn non_executable_files_are_not_handlers() {
+        let dir = tempfile::tempdir().unwrap();
+        let plain = dir.path().join("not-a-program");
+        std::fs::write(&plain, b"#!/bin/sh\n").unwrap();
+        assert!(!is_executable(&plain));
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&plain, std::fs::Permissions::from_mode(0o755)).unwrap();
+            assert!(is_executable(&plain));
+        }
     }
 }

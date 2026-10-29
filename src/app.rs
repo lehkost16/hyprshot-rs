@@ -177,7 +177,7 @@ fn run_screenshot_capture(
                     let _ = Notification::new()
                         .summary("Region mode")
                         .body("Drag to select an area.")
-                        .appname("Shot")
+                        .appname("Hyshot")
                         .timeout(notif_timeout as i32)
                         .show();
                 }
@@ -246,7 +246,7 @@ fn countdown(seconds: u64, silent: bool) {
             .summary("准备截图")
             .body(&format!("倒计时: {} 秒", i))
             .timeout(1000)
-            .appname("Shot")
+            .appname("Hyshot")
             .show();
         sleep(Duration::from_secs(1));
     }

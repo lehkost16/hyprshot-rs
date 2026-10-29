@@ -6,10 +6,18 @@ use tempfile::Builder;
 
 use crate::geometry::Geometry;
 
+/// Hard ceiling for an external OCR/translation command.
+const EXTERNAL_COMMAND_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
 pub struct ExternalOptions {
     pub debug: bool,
     pub silent: bool,
     pub notification_timeout: u32,
+}
+
+/// Quotes a value for safe interpolation into a POSIX shell command.
+fn shell_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', r"'\''"))
 }
 
 /// The process adapter owns temporary files, never selection or screen capture.
@@ -33,7 +41,9 @@ pub fn run(
         .write_all(image_bytes)
         .context("Failed to write screenshot bytes to temporary file")?;
     let temp_path = temp_file.path().to_path_buf();
-    let temp_path_str = temp_path.to_string_lossy().to_string();
+    // The template is a shell command: every substituted value is quoted so a
+    // path or monitor name containing shell metacharacters stays one word.
+    let temp_path_str = shell_quote(&temp_path.to_string_lossy());
 
     // Build the configured OCR command.
     let mut cmd_str = template.to_owned();
@@ -62,7 +72,7 @@ pub fn run(
     cmd_str = cmd_str.replace("{h}", &geometry.height.to_string());
     if let Some(monitor) = monitor_info {
         cmd_str = cmd_str.replace("{scale}", &monitor.scale.to_string());
-        cmd_str = cmd_str.replace("{monitor}", &monitor.name);
+        cmd_str = cmd_str.replace("{monitor}", &shell_quote(&monitor.name));
     }
 
     if debug {
@@ -70,13 +80,18 @@ pub fn run(
     }
 
     // OCR mode: capture stdout
-    let output = Command::new("sh")
-        .arg("-c")
-        .arg(&cmd_str)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .output()
-        .context("Failed to run OCR command")?;
+    // An OCR/translation helper that hangs must not hang the capture command:
+    // the whole point of the external workflow is a quick round trip.
+    let output = crate::utils::output_with_timeout(
+        {
+            let mut cmd = Command::new("sh");
+            cmd.arg("-c").arg(&cmd_str);
+            cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+            cmd
+        },
+        EXTERNAL_COMMAND_TIMEOUT,
+    )
+    .context("Failed to run OCR command")?;
 
     let ocr_stdout = String::from_utf8_lossy(&output.stdout);
     let ocr_stderr = String::from_utf8_lossy(&output.stderr);
@@ -119,7 +134,7 @@ pub fn run(
                 .summary("External tool completed")
                 .body(&cleaned_txt)
                 .timeout(notif_timeout as i32)
-                .appname("Shot")
+                .appname("Hyshot")
                 .show();
         }
     } else {
@@ -128,7 +143,7 @@ pub fn run(
                 .summary("External tool completed")
                 .body("未识别出文字")
                 .timeout(notif_timeout as i32)
-                .appname("Shot")
+                .appname("Hyshot")
                 .show();
         }
     }

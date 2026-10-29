@@ -12,6 +12,23 @@ use process::ProcessIdentity;
 use crate::compositor::MonitorInfo;
 use crate::geometry::Geometry;
 
+/// Which capture the overlay is drawing for. Drives the selection border
+/// colour so recording and long screenshot stay visually distinct.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CaptureKind {
+    Record,
+    Longshot,
+}
+
+impl CaptureKind {
+    pub fn as_arg(self) -> &'static str {
+        match self {
+            Self::Record => "record",
+            Self::Longshot => "longshot",
+        }
+    }
+}
+
 pub struct StartedCapture {
     recorder: Child,
     overlay: Option<Child>,
@@ -23,6 +40,7 @@ impl StartedCapture {
         mut recorder: Command,
         geometry: &Geometry,
         monitor: &MonitorInfo,
+        kind: CaptureKind,
         debug: bool,
     ) -> Result<Self> {
         let mut capture = Self {
@@ -60,6 +78,8 @@ impl StartedCapture {
                 .arg(monitor.x.to_string())
                 .arg("--oy")
                 .arg(monitor.y.to_string())
+                .arg("--kind")
+                .arg(kind.as_arg())
                 .args(debug.then_some("--debug"))
                 .stdout(Stdio::null())
                 .stderr(stderr)

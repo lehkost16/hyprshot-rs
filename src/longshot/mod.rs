@@ -195,6 +195,7 @@ pub fn handle_longshot(args: &Args, config: &config::Config, edit: bool) -> Resu
             rec_cmd,
             &geometry,
             &monitor_info,
+            crate::capture_session::CaptureKind::Longshot,
             debug,
         )?;
         let session = capture.session()?;

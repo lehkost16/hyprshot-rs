@@ -140,6 +140,9 @@ pub enum Subcommands {
         ox: i32,
         #[arg(long)]
         oy: i32,
+        /// Capture kind: "record" or "longshot", selects the border colour.
+        #[arg(long, default_value = "record")]
+        kind: String,
         #[arg(long)]
         debug: bool,
     },

@@ -25,6 +25,44 @@ use wayland_protocols_wlr::layer_shell::v1::client::{
 const PADDING: i32 = 10;
 const BORDER_THICK: i32 = 6;
 
+/// Border colour for the selection overlay, per capture kind.
+///
+/// The old value was pure `#FF0000`, which reads as an alarm rather than a
+/// selection and fights everything on screen. These are desaturated accents
+/// that stay legible over both light and dark content.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct BorderColor {
+    pub r: u8,
+    pub g: u8,
+    pub b: u8,
+}
+
+/// Screen recording: calm blue, the same family as the desktop's active accent.
+pub const BORDER_RECORD: BorderColor = BorderColor {
+    r: 122,
+    g: 162,
+    b: 247,
+};
+
+/// Long screenshot: teal, so the two capture modes stay tellable apart.
+pub const BORDER_LONGSHOT: BorderColor = BorderColor {
+    r: 115,
+    g: 218,
+    b: 202,
+};
+
+impl BorderColor {
+    /// Resolves a CLI kind string into its border colour. Unknown values fall
+    /// back to the recording colour rather than silently drawing something
+    /// unexpected.
+    pub fn for_kind(kind: &str) -> Self {
+        match kind {
+            "longshot" => BORDER_LONGSHOT,
+            _ => BORDER_RECORD,
+        }
+    }
+}
+
 pub struct OverlayOptions {
     pub x: i32,
     pub y: i32,
@@ -34,6 +72,7 @@ pub struct OverlayOptions {
     pub monitor: String,
     pub output_x: i32,
     pub output_y: i32,
+    pub color: BorderColor,
     pub debug: bool,
 }
 
@@ -318,7 +357,12 @@ fn border_geometry(target: &BorderTarget) -> Option<BorderGeometry> {
     })
 }
 
-fn draw_selection_border(mmap: &mut [u8], target: BorderTarget, alpha: u8) {
+fn draw_selection_border(
+    mmap: &mut [u8],
+    target: BorderTarget,
+    color: BorderColor,
+    alpha: u8,
+) {
     let thick = ((BORDER_THICK as f64) * target.scale).round() as i32;
     let padding = ((PADDING as f64) * target.scale).round() as i32;
 
@@ -339,17 +383,20 @@ fn draw_selection_border(mmap: &mut [u8], target: BorderTarget, alpha: u8) {
     let left_range = border_l..std::cmp::min(border_l + thick, border_r);
     let right_range = std::cmp::max(border_r - thick, border_l)..border_r;
 
-    // ARGB8888 (little-endian): bytes are [B, G, R, A]
-    // We want opaque red: B=0, G=0, R=255, A=alpha (premultiplied)
-    let r = alpha; // premultiplied: R_pre = 255 * alpha/255 = alpha
+    // ARGB8888 (little-endian): bytes are [B, G, R, A].
+    // Premultiplied: each channel is scaled by alpha/255 up front.
+    let scale_alpha = |c: u8| ((c as u32 * alpha as u32) / 255) as u8;
+    let pr = scale_alpha(color.r);
+    let pg = scale_alpha(color.g);
+    let pb = scale_alpha(color.b);
 
     let paint = |mmap: &mut [u8], y: i32, x_start: i32, x_end: i32| {
         for x in x_start..x_end {
             let off = ((y * target.surface_w + x) * 4) as usize;
             if off + 3 < mmap.len() {
-                mmap[off] = 0; // B
-                mmap[off + 1] = 0; // G
-                mmap[off + 2] = r; // R
+                mmap[off] = pb; // B
+                mmap[off + 1] = pg; // G
+                mmap[off + 2] = pr; // R
                 mmap[off + 3] = alpha; // A
             }
         }
@@ -532,6 +579,7 @@ pub fn run_overlay(options: OverlayOptions) -> Result<()> {
             rect,
             scale: 1.0,
         },
+        options.color,
         255,
     );
     surface_entry
@@ -556,7 +604,7 @@ pub fn run_overlay(options: OverlayOptions) -> Result<()> {
             rect,
             scale: 1.0,
         };
-        draw_selection_border(&mut surface_entry.mmap, target, alpha);
+        draw_selection_border(&mut surface_entry.mmap, target, options.color, alpha);
 
         // Damage only the border ring. The selection interior is transparent,
         // so declaring full-surface damage made the compositor re-blend an
@@ -612,7 +660,7 @@ mod tests {
     fn damage_ring_covers_every_drawn_pixel() {
         let t = target(100, 80, 400, 300, 1920, 1080);
         let mut buf = vec![0u8; (t.surface_w * t.surface_h * 4) as usize];
-        draw_selection_border(&mut buf, t, 255);
+        draw_selection_border(&mut buf, t, BORDER_RECORD, 255);
 
         let geo = border_geometry(&t).expect("geometry");
         let span_x = geo.right - geo.left;
@@ -664,7 +712,7 @@ mod tests {
         let t = target(5000, 5000, 100, 100, 1920, 1080);
         assert!(border_geometry(&t).is_none());
         let mut buf = vec![0u8; (t.surface_w * t.surface_h * 4) as usize];
-        draw_selection_border(&mut buf, t, 255);
+        draw_selection_border(&mut buf, t, BORDER_RECORD, 255);
         assert!(buf.iter().all(|b| *b == 0));
     }
 
@@ -674,5 +722,63 @@ mod tests {
         let geo = border_geometry(&t).expect("geometry");
         assert!(geo.left >= 0 && geo.top >= 0);
         assert!(geo.right <= t.surface_w && geo.bottom <= t.surface_h);
+    }
+
+    /// The border must actually carry the requested colour, in premultiplied
+    /// ARGB8888 byte order. A wrong channel order still produces "a colour",
+    /// so only an exact byte check catches it.
+    #[test]
+    fn border_writes_requested_colour_premultiplied() {
+        let t = target(100, 80, 400, 300, 800, 600);
+        let mut buf = vec![0u8; (t.surface_w * t.surface_h * 4) as usize];
+        draw_selection_border(&mut buf, t, BORDER_RECORD, 255);
+
+        let geo = border_geometry(&t).expect("geometry");
+        let off = ((geo.top * t.surface_w + geo.left) * 4) as usize;
+        assert_eq!(buf[off], BORDER_RECORD.b, "blue channel");
+        assert_eq!(buf[off + 1], BORDER_RECORD.g, "green channel");
+        assert_eq!(buf[off + 2], BORDER_RECORD.r, "red channel");
+        assert_eq!(buf[off + 3], 255, "alpha");
+    }
+
+    /// At partial alpha every channel scales with it. Getting this wrong is
+    /// invisible on white backgrounds and glaringly wrong on dark ones.
+    #[test]
+    fn border_alpha_premultiplies_all_channels() {
+        let t = target(100, 80, 400, 300, 800, 600);
+        let mut buf = vec![0u8; (t.surface_w * t.surface_h * 4) as usize];
+        let alpha = 128u8;
+        draw_selection_border(&mut buf, t, BORDER_RECORD, alpha);
+
+        let geo = border_geometry(&t).expect("geometry");
+        let off = ((geo.top * t.surface_w + geo.left) * 4) as usize;
+        let expect = |c: u8| ((c as u32 * alpha as u32) / 255) as u8;
+        assert_eq!(buf[off], expect(BORDER_RECORD.b));
+        assert_eq!(buf[off + 1], expect(BORDER_RECORD.g));
+        assert_eq!(buf[off + 2], expect(BORDER_RECORD.r));
+        assert_eq!(buf[off + 3], alpha);
+    }
+
+    /// Recording and long screenshot must not share a colour, otherwise the
+    /// distinction the colour exists for is lost.
+    #[test]
+    fn capture_kinds_have_distinct_colours() {
+        assert_ne!(BORDER_RECORD, BORDER_LONGSHOT);
+        assert_eq!(BorderColor::for_kind("record"), BORDER_RECORD);
+        assert_eq!(BorderColor::for_kind("longshot"), BORDER_LONGSHOT);
+        // Unknown values must not draw something unexpected.
+        assert_eq!(BorderColor::for_kind("bogus"), BORDER_RECORD);
+    }
+
+    /// Pure saturated primaries read as alarms rather than selections, and the
+    /// old #FF0000 in particular. Guard against regressing back to it.
+    #[test]
+    fn border_colours_are_not_harsh_primaries() {
+        for c in [BORDER_RECORD, BORDER_LONGSHOT] {
+            let max = c.r.max(c.g).max(c.b);
+            let min = c.r.min(c.g).min(c.b);
+            assert!(max < 255, "no channel may be fully saturated: {c:?}");
+            assert!(min > 0, "no channel may be fully off: {c:?}");
+        }
     }
 }

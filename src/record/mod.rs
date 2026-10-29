@@ -163,8 +163,13 @@ pub fn handle_record(args: &Args, config: &config::Config) -> Result<()> {
         cmd.args(&config.record.command_args);
         cmd.stdout(Stdio::null()).stderr(Stdio::null());
 
-        let capture =
-            crate::capture_session::StartedCapture::start(cmd, &geometry, &monitor_info, debug)?;
+        let capture = crate::capture_session::StartedCapture::start(
+            cmd,
+            &geometry,
+            &monitor_info,
+            crate::capture_session::CaptureKind::Record,
+            debug,
+        )?;
         let session = capture.session()?;
 
         // Write state file

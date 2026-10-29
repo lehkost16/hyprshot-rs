@@ -54,6 +54,7 @@ pub fn run(mut args: Args) -> Result<()> {
         monitor,
         ox,
         oy,
+        kind,
         debug,
     }) = &args.subcommand
     {
@@ -66,6 +67,7 @@ pub fn run(mut args: Args) -> Result<()> {
             monitor: monitor.clone(),
             output_x: *ox,
             output_y: *oy,
+            color: longshot::overlay::BorderColor::for_kind(kind),
             debug: *debug,
         });
     }

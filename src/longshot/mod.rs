@@ -44,8 +44,18 @@ pub fn handle_longshot(args: &Args, config: &config::Config) -> Result<()> {
         // Read state
         let state_data =
             fs::read_to_string(&state_file).context("Failed to read longshot state file")?;
-        let mut state: LongshotState =
-            serde_json::from_str(&state_data).context("Failed to parse longshot state JSON")?;
+        // A truncated or stale state file must not wedge the hotkey forever:
+        // without this the same unparseable file is re-read on every press and
+        // the command dies before it can ever start a new capture.
+        let mut state: LongshotState = match serde_json::from_str(&state_data) {
+            Ok(state) => state,
+            Err(error) => {
+                let _ = fs::remove_file(&state_file);
+                return Err(error).context(
+                    "Longshot state was unreadable and has been cleared; run longshot again",
+                );
+            }
+        };
 
         if debug {
             eprintln!("Stopping longshot recording: {:?}", state);
@@ -119,24 +129,22 @@ pub fn handle_longshot(args: &Args, config: &config::Config) -> Result<()> {
                 }
             }
             Err(err) => {
-                // The stitched PNG was never published, so this session has no
-                // way to succeed on a retry: stitch_video writes with
-                // persist_noclobber, which would fail again on the same output
-                // path. Clearing the state file lets the next hotkey press
-                // start a fresh capture instead of replaying this failure
-                // forever. The source recording is kept for manual stitching.
+                // A failed stitch ends the session: the same video would match
+                // the same way again, so keeping the state file would only make
+                // the next hotkey press replay a failure that cannot succeed.
+                // Clearing it starts a fresh capture instead; the source video
+                // is kept so it can still be stitched by hand.
                 let _ = fs::remove_file(&state_file);
+
                 if !silent {
                     let _ = Notification::new()
-                        .summary("Longshot error")
-                        .body(&format!(
-                            "拼接失败: {}\n源视频保留于: {}",
-                            err, state.video_path
-                        ))
+                        .summary("Longshot 拼接失败")
+                        .body(&format!("{}\n源视频保留于: {}", err, state.video_path))
                         .timeout(notif_timeout as i32)
                         .appname("Hyshot")
                         .show();
                 }
+
                 return Err(err)
                     .context(format!("Source recording retained at {}", state.video_path));
             }

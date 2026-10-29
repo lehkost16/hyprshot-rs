@@ -42,8 +42,18 @@ pub fn handle_record(args: &Args, config: &config::Config) -> Result<()> {
         // Read state
         let state_data =
             fs::read_to_string(&state_file).context("Failed to read record state file")?;
-        let mut state: RecordState =
-            serde_json::from_str(&state_data).context("Failed to parse record state JSON")?;
+        // A truncated or stale state file must not wedge the hotkey forever:
+        // without this the same unparseable file is re-read on every press and
+        // the command dies before it can ever start a new recording.
+        let mut state: RecordState = match serde_json::from_str(&state_data) {
+            Ok(state) => state,
+            Err(error) => {
+                let _ = fs::remove_file(&state_file);
+                return Err(error).context(
+                    "Record state was unreadable and has been cleared; run record again",
+                );
+            }
+        };
 
         if debug {
             eprintln!("Stopping recording: {:?}", state);
@@ -53,10 +63,20 @@ pub fn handle_record(args: &Args, config: &config::Config) -> Result<()> {
         state.session.phase = Phase::Finalizing;
         capture_session::write_state(&state_file, &state)?;
         if let Err(error) = finalize_recording(&state) {
-            state.session.phase = Phase::Failed;
-            capture_session::write_state(&state_file, &state)?;
+            // Failure ends the session, same as longshot: finalizing the same
+            // file again would fail identically. The raw recording is kept so
+            // it can still be recovered by hand.
+            let _ = fs::remove_file(&state_file);
+            if !silent {
+                let _ = Notification::new()
+                    .summary("录屏保存失败")
+                    .body(&format!("{}\n原始录像保留于: {}", error, state.recording_path))
+                    .timeout(notif_timeout as i32)
+                    .appname("Hyshot")
+                    .show();
+            }
             return Err(error).context(format!(
-                "Recording retained at {}; run record again to retry finalization",
+                "Raw recording retained at {}",
                 state.recording_path
             ));
         }

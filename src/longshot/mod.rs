@@ -109,9 +109,14 @@ pub fn handle_longshot(args: &Args, config: &config::Config, edit: bool) -> Resu
                     );
                 }
                 drop(_lock);
-                // Opening the editor takes precedence over the viewer: both at
-                // once would show the same image twice.
-                if state.edit_on_finish || edit {
+                // The three outcomes are mutually exclusive: editing shows the
+                // image in the editor, opening shows it in the viewer, and
+                // doing both at once would present the same image twice.
+                // `--edit` still forces the editor regardless of config.
+                let wants_editor = state.edit_on_finish
+                    || edit
+                    || config.longshot.after_save.eq_ignore_ascii_case("edit");
+                if wants_editor {
                     return edit_stitched(image, Path::new(&state.output_path), args, config);
                 }
                 if config.longshot.after_save.eq_ignore_ascii_case("open") {
@@ -266,6 +271,10 @@ pub fn handle_stitch(
 
     if let Err(error) = copy_png(&output_path) {
         eprintln!("Longshot saved, but clipboard copy failed: {error:#}");
+    }
+
+    if config.longshot.after_save.eq_ignore_ascii_case("edit") {
+        return edit_stitched(image, &output_path, args, config);
     }
 
     if config.longshot.after_save.eq_ignore_ascii_case("open") {

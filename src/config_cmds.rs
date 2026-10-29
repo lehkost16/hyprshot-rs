@@ -76,18 +76,37 @@ pub fn handle_set_config(args: &[String]) -> Result<()> {
 
 /// Validates an `after_save` value before it reaches the config.
 ///
-/// Only the two documented actions are accepted. Letting a typo through would
+/// Only the documented actions are accepted. Letting a typo through would
 /// silently behave as "save", so the mistake would surface much later as
 /// "open doesn't work" instead of at the moment of the typo.
-fn parse_after_save(value: &str) -> Result<String> {
+///
+/// `allow_edit` gates the `edit` outcome: a stitched image can be annotated,
+/// a video cannot, so `record.after_save = "edit"` must be rejected up front
+/// rather than silently doing nothing at the end of a long recording.
+fn parse_after_save(value: &str, allow_edit: bool) -> Result<String> {
     let normalized = value.trim().to_ascii_lowercase();
-    match normalized.as_str() {
-        "save" | "open" => Ok(normalized),
-        other => anyhow::bail!(
-            "Value must be 'save' or 'open' (got '{other}'): \
-             'save' keeps the file quietly, 'open' also opens it afterwards"
-        ),
+    let accepted = match normalized.as_str() {
+        "save" | "open" => true,
+        "edit" => allow_edit,
+        _ => false,
+    };
+    if accepted {
+        return Ok(normalized);
     }
+    let choices = if allow_edit {
+        "'save', 'open' or 'edit'"
+    } else {
+        "'save' or 'open'"
+    };
+    let edit_hint = if allow_edit {
+        ", 'edit' opens it in the annotation editor"
+    } else {
+        " (a recording cannot be annotated)"
+    };
+    anyhow::bail!(
+        "Value must be {choices} (got '{normalized}'): \
+         'save' keeps the file quietly, 'open' opens it afterwards{edit_hint}"
+    )
 }
 
 fn set_config_value(config: &mut config::Config, key: &str, value: &str) -> Result<()> {
@@ -188,7 +207,7 @@ fn set_config_value(config: &mut config::Config, key: &str, value: &str) -> Resu
                 value.parse().context("Value must be a float (e.g. 0.30)")?;
         }
         ("longshot", "after_save") => {
-            config.longshot.after_save = parse_after_save(value)?;
+            config.longshot.after_save = parse_after_save(value, true)?;
         }
 
         // [record] section
@@ -229,7 +248,8 @@ fn set_config_value(config: &mut config::Config, key: &str, value: &str) -> Resu
             }
         }
         ("record", "after_save") => {
-            config.record.after_save = parse_after_save(value)?;
+            // A recording has nothing to annotate, so `edit` is not an option.
+            config.record.after_save = parse_after_save(value, false)?;
         }
 
         _ => {
@@ -253,7 +273,7 @@ fn set_config_value(config: &mut config::Config, key: &str, value: &str) -> Resu
                    - longshot.sad_threshold (float)\n\
                    - longshot.max_skip (integer)\n\
                    - longshot.target_overlap (float)\n\
-                   - longshot.after_save (save, open)\n\
+                   - longshot.after_save (save, open, edit)\n\
                  Record:\n\
                    - record.fps (integer)\n\
                    - record.quality (compact, balanced, high)\n\
@@ -729,6 +749,10 @@ mod tests {
         // Case and stray whitespace are normalised, not rejected.
         set_config_value(&mut config, "record.after_save", "  SAVE  ").unwrap();
         assert_eq!(config.record.after_save, "save");
+
+        // `edit` is a longshot-only outcome: a recording has nothing to annotate.
+        set_config_value(&mut config, "longshot.after_save", "edit").unwrap();
+        assert_eq!(config.longshot.after_save, "edit");
     }
 
     /// A typo must fail loudly at set time; silently storing it would behave as
@@ -743,5 +767,16 @@ mod tests {
             );
         }
         assert_eq!(config.record.after_save, "save", "config stays untouched");
+    }
+
+    /// `edit` is longshot-only. Accepting it for a recording would end a long
+    /// capture with nothing happening, so it must fail at set time.
+    #[test]
+    fn edit_is_longshot_only() {
+        let mut config = config::Config::default();
+        assert!(set_config_value(&mut config, "record.after_save", "edit").is_err());
+        assert_eq!(config.record.after_save, "save", "config stays untouched");
+        set_config_value(&mut config, "longshot.after_save", "edit").unwrap();
+        assert_eq!(config.longshot.after_save, "edit");
     }
 }

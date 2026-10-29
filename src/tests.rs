@@ -436,24 +436,32 @@ fn explicit_editor_preferences_roundtrip_without_style_memory() {
     assert_eq!(decoded.editor, config.editor);
 }
 
+/// Whether to open the editor is a config decision (`after_save = "edit"`),
+/// not a per-invocation flag. `--edit` must be gone from both entry points:
+/// an accepted-but-ignored flag would silently do nothing, and an accepted
+/// flag that overrides config is the confusion this change removed.
 #[test]
-fn longshot_and_stitch_edit_flags_are_explicit() {
+fn longshot_and_stitch_no_longer_accept_edit_flag() {
     use clap::Parser;
-    let args = crate::cli::Args::try_parse_from(["hyshot", "longshot", "--edit"]).unwrap();
-    assert!(matches!(
-        args.subcommand,
-        Some(crate::cli::Subcommands::Longshot { edit: true })
-    ));
-    let args =
-        crate::cli::Args::try_parse_from(["hyshot", "stitch", "video.mp4", "--edit"]).unwrap();
-    assert!(matches!(
-        args.subcommand,
-        Some(crate::cli::Subcommands::Stitch { edit: true, .. })
-    ));
+    for argv in [
+        vec!["hyshot", "longshot", "--edit"],
+        vec!["hyshot", "stitch", "video.mp4", "--edit"],
+    ] {
+        assert!(
+            crate::cli::Args::try_parse_from(&argv).is_err(),
+            "{argv:?} must be rejected now that after_save decides"
+        );
+    }
+    // Both subcommands still parse without the removed flag.
     let args = crate::cli::Args::try_parse_from(["hyshot", "longshot"]).unwrap();
     assert!(matches!(
         args.subcommand,
-        Some(crate::cli::Subcommands::Longshot { edit: false })
+        Some(crate::cli::Subcommands::Longshot)
+    ));
+    let args = crate::cli::Args::try_parse_from(["hyshot", "stitch", "video.mp4"]).unwrap();
+    assert!(matches!(
+        args.subcommand,
+        Some(crate::cli::Subcommands::Stitch { .. })
     ));
 }
 

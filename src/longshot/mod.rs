@@ -27,10 +27,9 @@ struct LongshotState {
     session: Session,
     video_path: String,
     output_path: String,
-    edit_on_finish: bool,
 }
 
-pub fn handle_longshot(args: &Args, config: &config::Config, edit: bool) -> Result<()> {
+pub fn handle_longshot(args: &Args, config: &config::Config) -> Result<()> {
     let debug = args.debug;
     let silent = args.silent || !config.capture.notification;
     let notif_timeout = args
@@ -112,11 +111,7 @@ pub fn handle_longshot(args: &Args, config: &config::Config, edit: bool) -> Resu
                 // The three outcomes are mutually exclusive: editing shows the
                 // image in the editor, opening shows it in the viewer, and
                 // doing both at once would present the same image twice.
-                // `--edit` still forces the editor regardless of config.
-                let wants_editor = state.edit_on_finish
-                    || edit
-                    || config.longshot.after_save.eq_ignore_ascii_case("edit");
-                if wants_editor {
+                if config.longshot.after_save.eq_ignore_ascii_case("edit") {
                     return edit_stitched(image, Path::new(&state.output_path), args, config);
                 }
                 if config.longshot.after_save.eq_ignore_ascii_case("open") {
@@ -215,7 +210,6 @@ pub fn handle_longshot(args: &Args, config: &config::Config, edit: bool) -> Resu
             session,
             video_path,
             output_path: output_path.to_string_lossy().to_string(),
-            edit_on_finish: edit,
         };
         capture.commit(&state_file, &state)?;
 
@@ -237,7 +231,6 @@ pub fn handle_longshot(args: &Args, config: &config::Config, edit: bool) -> Resu
 pub fn handle_stitch(
     input: std::path::PathBuf,
     output: Option<std::path::PathBuf>,
-    edit: bool,
     args: &Args,
     config: &config::Config,
 ) -> Result<()> {
@@ -291,9 +284,6 @@ pub fn handle_stitch(
         );
     }
 
-    if edit {
-        edit_stitched(image, &output_path, args, config)?;
-    }
     Ok(())
 }
 

@@ -100,13 +100,7 @@ pub enum Subcommands {
     #[command(about = "Screenshot of current monitor after 10 seconds delay")]
     In10,
     #[command(about = "Scroll recording and stitch long screenshot")]
-    Longshot {
-        #[arg(
-            long,
-            help = "Open the completed long screenshot in the built-in editor"
-        )]
-        edit: bool,
-    },
+    Longshot,
     #[command(about = "Stitch an existing video into a long screenshot")]
     Stitch {
         #[arg(help = "Path to the recorded video file (MP4)")]
@@ -117,8 +111,6 @@ pub enum Subcommands {
             help = "Output PNG path (default: input path with .png extension)"
         )]
         output: Option<PathBuf>,
-        #[arg(long, help = "Open the stitched image in the built-in editor")]
-        edit: bool,
     },
     #[command(about = "Record a selected screen region to video (toggle start/stop)")]
     Record,

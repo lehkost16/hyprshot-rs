@@ -45,7 +45,6 @@ hyshot area                        # Selected region
 hyshot annotate                    # Selected region in the built-in editor
 hyshot edit image.png              # Open an existing image in the editor
 hyshot longshot                    # Start/stop scrolling screenshot capture
-hyshot longshot --edit             # Open the completed long screenshot
 hyshot record                      # Start/stop region recording
 hyshot external ocr                # Run configured OCR on a selected region
 hyshot external translate          # Run configured translation on a region
@@ -120,7 +119,7 @@ fps = 12
 sad_threshold = 8.0
 max_skip = 6
 target_overlap = 0.30
-after_save = "save" # "save" keeps the image, "open" also opens it
+after_save = "save" # "save" keeps the image, "open" opens it, "edit" opens the editor
 
 [record]
 hide_cursor = true

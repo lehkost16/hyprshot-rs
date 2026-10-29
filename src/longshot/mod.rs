@@ -264,13 +264,13 @@ pub fn handle_stitch(
     }
 
     if !silent {
-        let _ = Notification::new()
-            .summary("✅ 拼接完成")
-            .body(&format!("长图已保存至: {}", output_path.display()))
-            .icon(output_path.to_string_lossy().as_ref())
-            .timeout(notif_timeout as i32)
-            .appname("Shot")
-            .show();
+        crate::save::spawn_notification_with_actions(
+            "✅ 拼接完成".to_string(),
+            format!("长图已保存至: {}", output_path.display()),
+            output_path.to_string_lossy().into_owned(),
+            notif_timeout,
+            output_path.clone(),
+        );
     }
 
     if edit {

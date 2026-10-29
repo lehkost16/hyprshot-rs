@@ -73,16 +73,17 @@ pub fn handle_record(args: &Args, config: &config::Config) -> Result<()> {
                     "\n剪贴板复制失败"
                 }
             );
-            let _ = Notification::new()
-                .summary(if state.temp_video_path.is_some() {
-                    "GIF已生成"
+            crate::save::spawn_notification_with_actions(
+                if state.temp_video_path.is_some() {
+                    "GIF已生成".to_string()
                 } else {
-                    "录屏已完成"
-                })
-                .body(&body)
-                .timeout(notif_timeout as i32)
-                .appname("Shot")
-                .show();
+                    "录屏已完成".to_string()
+                },
+                body,
+                String::new(),
+                notif_timeout,
+                PathBuf::from(final_path),
+            );
         }
 
         if debug {

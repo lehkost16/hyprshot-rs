@@ -219,7 +219,7 @@ const ACTION_NOTIFICATION_MIN_TIMEOUT_MS: u32 = 8000;
 /// handler. Doing the wait in-process would keep hyshot alive for as long as
 /// the notification sits on screen — a screenshot command lingering for
 /// minutes is worse than spawning one short-lived helper.
-fn spawn_notification_with_actions(
+pub fn spawn_notification_with_actions(
     summary: String,
     body: String,
     _icon: String,

@@ -293,14 +293,25 @@ mod imp {
                     // Wait a short duration for the overlay to map
                     thread::sleep(Duration::from_millis(200));
                     if let Some(status) = child.try_wait()? {
-                        anyhow::bail!("hyprpicker exited during startup: {status}");
+                        // hyprpicker started but died immediately. Fall through
+                        // to the native freeze instead of aborting: the native
+                        // path is fully functional and losing the freeze
+                        // entirely just because a helper exited is a
+                        // regression, not a supported outcome.
+                        if debug {
+                            eprintln!(
+                                "Freeze: hyprpicker exited during startup ({}). Falling back to native.",
+                                status
+                            );
+                        }
+                    } else {
+                        return Ok(FreezeGuard {
+                            guard: FreezeGuardType::Hyprpicker {
+                                child,
+                                runtime_dir: Some(runtime_dir),
+                            },
+                        });
                     }
-                    return Ok(FreezeGuard {
-                        guard: FreezeGuardType::Hyprpicker {
-                            child,
-                            runtime_dir: Some(runtime_dir),
-                        },
-                    });
                 }
                 Err(e) => {
                     if debug {

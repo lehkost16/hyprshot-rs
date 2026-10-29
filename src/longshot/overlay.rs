@@ -285,6 +285,39 @@ impl Dispatch<ZwlrLayerShellV1, ()> for State {
     }
 }
 
+/// Geometry of the border ring, extracted so damage accounting and drawing
+/// always agree. No drawing behaviour depends on this being separate.
+struct BorderGeometry {
+    left: i32,
+    top: i32,
+    right: i32,
+    bottom: i32,
+    thick: i32,
+}
+
+fn border_geometry(target: &BorderTarget) -> Option<BorderGeometry> {
+    let thick = ((BORDER_THICK as f64) * target.scale).round() as i32;
+    let padding = ((PADDING as f64) * target.scale).round() as i32;
+
+    let left = ((target.rect.x as f64 * target.scale) as i32 - padding).max(0);
+    let right = (((target.rect.x + target.rect.w) as f64 * target.scale) as i32 + padding)
+        .min(target.surface_w);
+    let top = ((target.rect.y as f64 * target.scale) as i32 - padding).max(0);
+    let bottom = (((target.rect.y + target.rect.h) as f64 * target.scale) as i32 + padding)
+        .min(target.surface_h);
+
+    if left >= right || top >= bottom {
+        return None;
+    }
+    Some(BorderGeometry {
+        left,
+        top,
+        right,
+        bottom,
+        thick,
+    })
+}
+
 fn draw_selection_border(mmap: &mut [u8], target: BorderTarget, alpha: u8) {
     let thick = ((BORDER_THICK as f64) * target.scale).round() as i32;
     let padding = ((PADDING as f64) * target.scale).round() as i32;
@@ -517,24 +550,129 @@ pub fn run_overlay(options: OverlayOptions) -> Result<()> {
             (((elapsed * 2.0 * std::f32::consts::PI * 1.5).sin() + 1.0) * 0.5 * 200.0 + 55.0) as u8;
 
         let surface_entry = state.surface.as_mut().unwrap();
-        draw_selection_border(
-            &mut surface_entry.mmap,
-            BorderTarget {
-                surface_w: w_buf,
-                surface_h: h_buf,
-                rect,
-                scale: 1.0,
-            },
-            alpha,
-        );
+        let target = BorderTarget {
+            surface_w: w_buf,
+            surface_h: h_buf,
+            rect,
+            scale: 1.0,
+        };
+        draw_selection_border(&mut surface_entry.mmap, target, alpha);
 
-        surface_entry.surface.damage_buffer(0, 0, w_buf, h_buf);
+        // Damage only the border ring. The selection interior is transparent,
+        // so declaring full-surface damage made the compositor re-blend an
+        // entire fullscreen layer every frame — that is what made pointer
+        // motion stutter while picking a region.
+        if let Some(geo) = border_geometry(&target) {
+            let span_x = geo.right - geo.left;
+            let span_y = geo.bottom - geo.top;
+            let band = geo.thick.min(span_x).min(span_y);
+            if band > 0 {
+                surface_entry
+                    .surface
+                    .damage_buffer(geo.left, geo.top, span_x, band);
+                surface_entry
+                    .surface
+                    .damage_buffer(geo.left, geo.bottom - band, span_x, band);
+                surface_entry
+                    .surface
+                    .damage_buffer(geo.left, geo.top, band, span_y);
+                surface_entry
+                    .surface
+                    .damage_buffer(geo.right - band, geo.top, band, span_y);
+            }
+        }
         surface_entry.surface.commit();
         conn.flush().ok();
 
-        event_queue.roundtrip(&mut state).ok();
+        // Non-blocking: drain whatever the compositor already queued instead
+        // of forcing a blocking round-trip on every frame.
+        event_queue.dispatch_pending(&mut state).ok();
 
-        // ~20 FPS
-        thread::sleep(Duration::from_millis(50));
+        // ~10 FPS is plenty for a breathing outline.
+        thread::sleep(Duration::from_millis(100));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn target(x: i32, y: i32, w: i32, h: i32, sw: i32, sh: i32) -> BorderTarget {
+        BorderTarget {
+            surface_w: sw,
+            surface_h: sh,
+            rect: Rect { x, y, w, h },
+            scale: 1.0,
+        }
+    }
+
+    /// Every pixel the draw pass touches must fall inside a damaged rectangle,
+    /// otherwise the outline leaves stale trails on screen.
+    #[test]
+    fn damage_ring_covers_every_drawn_pixel() {
+        let t = target(100, 80, 400, 300, 1920, 1080);
+        let mut buf = vec![0u8; (t.surface_w * t.surface_h * 4) as usize];
+        draw_selection_border(&mut buf, t, 255);
+
+        let geo = border_geometry(&t).expect("geometry");
+        let span_x = geo.right - geo.left;
+        let span_y = geo.bottom - geo.top;
+        let band = geo.thick.min(span_x).min(span_y);
+
+        let mut covered = vec![false; (t.surface_w * t.surface_h) as usize];
+        let mut mark = |x: i32, y: i32, w: i32, h: i32| {
+            for yy in y..(y + h).min(t.surface_h) {
+                for xx in x..(x + w).min(t.surface_w) {
+                    if xx >= 0 && yy >= 0 {
+                        covered[(yy * t.surface_w + xx) as usize] = true;
+                    }
+                }
+            }
+        };
+        mark(geo.left, geo.top, span_x, band);
+        mark(geo.left, geo.bottom - band, span_x, band);
+        mark(geo.left, geo.top, band, span_y);
+        mark(geo.right - band, geo.top, band, span_y);
+
+        for i in 0..covered.len() {
+            if buf[i * 4 + 3] != 0 {
+                assert!(covered[i], "pixel {i} drawn but not damaged");
+            }
+        }
+    }
+
+    /// Full-surface damage caused the pointer stutter; the ring must stay a
+    /// small fraction of the surface.
+    #[test]
+    fn damage_ring_is_a_small_fraction_of_full_surface() {
+        let t = target(0, 0, 1920, 1080, 1920, 1080);
+        let geo = border_geometry(&t).expect("geometry");
+        let span_x = geo.right - geo.left;
+        let span_y = geo.bottom - geo.top;
+        let band = geo.thick.min(span_x).min(span_y);
+
+        let ring = 2 * span_x * band + 2 * band * span_y;
+        let full = t.surface_w * t.surface_h;
+        assert!(
+            ring * 20 < full,
+            "ring damage {ring} should be under 5% of {full}"
+        );
+    }
+
+    #[test]
+    fn off_surface_selection_has_no_geometry_and_draws_nothing() {
+        let t = target(5000, 5000, 100, 100, 1920, 1080);
+        assert!(border_geometry(&t).is_none());
+        let mut buf = vec![0u8; (t.surface_w * t.surface_h * 4) as usize];
+        draw_selection_border(&mut buf, t, 255);
+        assert!(buf.iter().all(|b| *b == 0));
+    }
+
+    #[test]
+    fn geometry_stays_inside_the_surface() {
+        let t = target(-50, -50, 300, 300, 1920, 1080);
+        let geo = border_geometry(&t).expect("geometry");
+        assert!(geo.left >= 0 && geo.top >= 0);
+        assert!(geo.right <= t.surface_w && geo.bottom <= t.surface_h);
     }
 }

@@ -74,6 +74,22 @@ pub fn handle_set_config(args: &[String]) -> Result<()> {
     Ok(())
 }
 
+/// Validates an `after_save` value before it reaches the config.
+///
+/// Only the two documented actions are accepted. Letting a typo through would
+/// silently behave as "save", so the mistake would surface much later as
+/// "open doesn't work" instead of at the moment of the typo.
+fn parse_after_save(value: &str) -> Result<String> {
+    let normalized = value.trim().to_ascii_lowercase();
+    match normalized.as_str() {
+        "save" | "open" => Ok(normalized),
+        other => anyhow::bail!(
+            "Value must be 'save' or 'open' (got '{other}'): \
+             'save' keeps the file quietly, 'open' also opens it afterwards"
+        ),
+    }
+}
+
 fn set_config_value(config: &mut config::Config, key: &str, value: &str) -> Result<()> {
     let parts: Vec<&str> = key.split('.').collect();
 
@@ -171,6 +187,9 @@ fn set_config_value(config: &mut config::Config, key: &str, value: &str) -> Resu
             config.longshot.target_overlap =
                 value.parse().context("Value must be a float (e.g. 0.30)")?;
         }
+        ("longshot", "after_save") => {
+            config.longshot.after_save = parse_after_save(value)?;
+        }
 
         // [record] section
         ("record", "hide_cursor") => {
@@ -209,6 +228,9 @@ fn set_config_value(config: &mut config::Config, key: &str, value: &str) -> Resu
                 config.record.command_args = value.split_whitespace().map(String::from).collect();
             }
         }
+        ("record", "after_save") => {
+            config.record.after_save = parse_after_save(value)?;
+        }
 
         _ => {
             return Err(anyhow::anyhow!(
@@ -231,12 +253,14 @@ fn set_config_value(config: &mut config::Config, key: &str, value: &str) -> Resu
                    - longshot.sad_threshold (float)\n\
                    - longshot.max_skip (integer)\n\
                    - longshot.target_overlap (float)\n\
+                   - longshot.after_save (save, open)\n\
                  Record:\n\
                    - record.fps (integer)\n\
                    - record.quality (compact, balanced, high)\n\
                    - record.audio (true, false)\n\
                    - record.save_dir (string)\n\
                    - record.format (webm, mp4, gif, mkv)\n\
+                   - record.after_save (save, open)\n\
                  Advanced record compatibility:\n\
                    - record.crf (deprecated integer, retained for old configs)\n\
                    - record.codec (string, e.g. vp9, avc)\n\
@@ -690,5 +714,34 @@ mod tests {
         assert_eq!(config.editor.active_tool, "Pencil");
         assert!(set_config_value(&mut config, "editor.exit_after_save", "yes").is_err());
         assert!(set_config_value(&mut config, "editor.unknown", "true").is_err());
+    }
+
+    /// `hyshot --set record.after_save open` must work through the same key
+    /// path the CLI uses, for both sections.
+    #[test]
+    fn after_save_is_settable_by_key() {
+        let mut config = config::Config::default();
+        set_config_value(&mut config, "record.after_save", "open").unwrap();
+        assert_eq!(config.record.after_save, "open");
+        set_config_value(&mut config, "longshot.after_save", "open").unwrap();
+        assert_eq!(config.longshot.after_save, "open");
+
+        // Case and stray whitespace are normalised, not rejected.
+        set_config_value(&mut config, "record.after_save", "  SAVE  ").unwrap();
+        assert_eq!(config.record.after_save, "save");
+    }
+
+    /// A typo must fail loudly at set time; silently storing it would behave as
+    /// "save" and surface much later as "open mysteriously does nothing".
+    #[test]
+    fn invalid_after_save_is_rejected() {
+        let mut config = config::Config::default();
+        for bad in ["openn", "true", "", "yes"] {
+            assert!(
+                set_config_value(&mut config, "record.after_save", bad).is_err(),
+                "{bad:?} must be rejected"
+            );
+        }
+        assert_eq!(config.record.after_save, "save", "config stays untouched");
     }
 }

@@ -86,7 +86,7 @@ pub fn handle_set_config(args: &[String]) -> Result<()> {
 fn parse_after_save(value: &str, allow_edit: bool) -> Result<String> {
     let normalized = value.trim().to_ascii_lowercase();
     let accepted = match normalized.as_str() {
-        "save" | "open" => true,
+        "save" | "copy" | "open" => true,
         "edit" => allow_edit,
         _ => false,
     };
@@ -94,9 +94,9 @@ fn parse_after_save(value: &str, allow_edit: bool) -> Result<String> {
         return Ok(normalized);
     }
     let choices = if allow_edit {
-        "'save', 'open' or 'edit'"
+        "'save', 'copy', 'open' or 'edit'"
     } else {
-        "'save' or 'open'"
+        "'save', 'copy' or 'open'"
     };
     let edit_hint = if allow_edit {
         ", 'edit' opens it in the annotation editor"
@@ -105,7 +105,7 @@ fn parse_after_save(value: &str, allow_edit: bool) -> Result<String> {
     };
     anyhow::bail!(
         "Value must be {choices} (got '{normalized}'): \
-         'save' keeps the file quietly, 'open' opens it afterwards{edit_hint}"
+         'save' keeps the file quietly, 'copy' copies to clipboard, 'open' opens it afterwards{edit_hint}"
     )
 }
 
@@ -273,14 +273,14 @@ fn set_config_value(config: &mut config::Config, key: &str, value: &str) -> Resu
                    - longshot.sad_threshold (float)\n\
                    - longshot.max_skip (integer)\n\
                    - longshot.target_overlap (float)\n\
-                   - longshot.after_save (save, open, edit)\n\
+                   - longshot.after_save (save, copy, open, edit)\n\
                  Record:\n\
                    - record.fps (integer)\n\
                    - record.quality (compact, balanced, high)\n\
                    - record.audio (true, false)\n\
                    - record.save_dir (string)\n\
                    - record.format (webm, mp4, gif, mkv)\n\
-                   - record.after_save (save, open)\n\
+                   - record.after_save (save, copy, open)\n\
                  Advanced record compatibility:\n\
                    - record.crf (deprecated integer, retained for old configs)\n\
                    - record.codec (string, e.g. vp9, avc)\n\
@@ -745,6 +745,11 @@ mod tests {
         assert_eq!(config.record.after_save, "open");
         set_config_value(&mut config, "longshot.after_save", "open").unwrap();
         assert_eq!(config.longshot.after_save, "open");
+
+        set_config_value(&mut config, "record.after_save", "copy").unwrap();
+        assert_eq!(config.record.after_save, "copy");
+        set_config_value(&mut config, "longshot.after_save", "copy").unwrap();
+        assert_eq!(config.longshot.after_save, "copy");
 
         // Case and stray whitespace are normalised, not rejected.
         set_config_value(&mut config, "record.after_save", "  SAVE  ").unwrap();

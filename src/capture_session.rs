@@ -1,6 +1,6 @@
 //! Shared recorder/overlay lifecycle for video recording and scrolling capture.
 
-use anyhow::{Context, Result, ensure};
+use anyhow::{Context, Error, Result, ensure};
 use serde::{Deserialize, Serialize};
 use std::io::Write;
 use std::path::Path;
@@ -148,22 +148,55 @@ impl Session {
         if self.phase != Phase::Recording {
             return Ok(());
         }
-        let recorder = self.recorder.open()?;
-        let overlay = self.overlay.open()?;
+
+        // Signalling must be best-effort for BOTH processes. Opening a handle
+        // can fail (the process was reaped, the boot id differs, /proc is
+        // unreadable) and a `?` here would return before the other process is
+        // even asked to stop — leaving a recorder writing to disk forever with
+        // nothing tracking it. Collect the errors and report them only after
+        // both have been signalled and reaped.
+        let mut first_error: Option<Error> = None;
+        let recorder = match self.recorder.open() {
+            Ok(handle) => handle,
+            Err(error) => {
+                first_error = Some(error);
+                None
+            }
+        };
+        let overlay = match self.overlay.open() {
+            Ok(handle) => handle,
+            Err(error) => {
+                first_error.get_or_insert(error);
+                None
+            }
+        };
+
         if let Some(process) = &recorder {
-            process.signal(libc::SIGINT)?;
+            if let Err(error) = process.signal(libc::SIGINT) {
+                first_error.get_or_insert(error);
+            }
         }
         if let Some(process) = &overlay {
-            process.signal(libc::SIGTERM)?;
+            if let Err(error) = process.signal(libc::SIGTERM) {
+                first_error.get_or_insert(error);
+            }
         }
         if let Some(process) = recorder {
-            process.wait(5000)?;
+            if let Err(error) = process.wait(5000) {
+                first_error.get_or_insert(error);
+            }
         }
         if let Some(process) = overlay {
-            process.wait(1000)?;
+            if let Err(error) = process.wait(1000) {
+                first_error.get_or_insert(error);
+            }
         }
+
         self.phase = Phase::Finalizing;
-        Ok(())
+        match first_error {
+            Some(error) => Err(error),
+            None => Ok(()),
+        }
     }
 }
 
@@ -174,6 +207,84 @@ pub fn write_state(path: &Path, state: &impl Serialize) -> Result<()> {
     file.flush()?;
     file.as_file().sync_all()?;
     file.persist(path).context("Cannot publish capture state")?;
+    Ok(())
+}
+
+
+/// Names of the capture sessions whose processes outlive their state file.
+///
+/// The state file is the only thing that remembers the recorder and overlay
+/// PIDs. If it is deleted or found corrupt, those processes keep running with
+/// nothing pointing at them: the next hotkey press would start a second
+/// recorder while the first one still owns the screen area. A side-channel
+/// journal records the identities next to the state file so a later run can
+/// reap anything the state file no longer accounts for.
+const ORPHAN_JOURNAL: &str = "orphans.json";
+
+/// Records the process identities of a live session, replacing any previous entry.
+pub fn journal_processes(path: &Path, session: &Session) -> Result<()> {
+    let identities = [session.recorder.clone(), session.overlay.clone()];
+    let mut all = read_journal(path).unwrap_or_default();
+    all.retain(|identity| identity.open().map(|h| h.is_some()).unwrap_or(false));
+    for identity in identities {
+        if !all.iter().any(|kept| kept.pid() == identity.pid()) {
+            all.push(identity);
+        }
+    }
+    write_journal(path, &all)
+}
+
+/// Forgets every journal entry; called once a session is fully finished.
+pub fn clear_journal(path: &Path) -> Result<()> {
+    write_journal(path, &[])
+}
+
+/// Kills any journaled capture process still alive and clears the journal.
+///
+/// Called before a new capture starts: whatever is still running at that point
+/// cannot belong to a session the user can still stop, because starting a
+/// capture requires the lock the owning session would hold.
+pub fn reap_orphans(path: &Path, debug: bool) {
+    let identities = read_journal(path).unwrap_or_default();
+    for identity in identities {
+        if let Ok(Some(handle)) = identity.open() {
+            if debug {
+                eprintln!("Reaping orphaned capture process {}", identity.pid());
+            }
+            let _ = handle.signal(libc::SIGTERM);
+            let _ = handle.wait(1000);
+        }
+    }
+    let _ = clear_journal(path);
+}
+
+fn journal_path(state: &Path) -> std::path::PathBuf {
+    state.with_file_name(ORPHAN_JOURNAL)
+}
+
+fn read_journal(state: &Path) -> Result<Vec<ProcessIdentity>> {
+    let path = journal_path(state);
+    let data = match std::fs::read_to_string(&path) {
+        Ok(data) => data,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => return Err(error).context("Cannot read capture journal"),
+    };
+    serde_json::from_str(&data).context("Cannot parse capture journal")
+}
+
+fn write_journal(state: &Path, identities: &[ProcessIdentity]) -> Result<()> {
+    let path = journal_path(state);
+    if identities.is_empty() {
+        let _ = std::fs::remove_file(&path);
+        return Ok(());
+    }
+    let mut file = tempfile::NamedTempFile::new_in(
+        path.parent().context("Journal path has no parent")?,
+    )?;
+    serde_json::to_writer_pretty(&mut file, identities)?;
+    file.flush()?;
+    file.as_file().sync_all()?;
+    file.persist(&path).context("Cannot publish capture journal")?;
     Ok(())
 }
 
@@ -282,5 +393,94 @@ mod tests {
         );
         assert!(!Path::new(&format!("/proc/{pid}")).exists());
         assert!(!state_path.exists());
+    }
+
+    /// The journal must survive a state file being deleted while the session is
+    /// live: that is the only case it exists for.
+    #[test]
+    fn journal_survives_missing_state_file() {
+        let directory = tempfile::tempdir().unwrap();
+        let state = directory.path().join("longshot.json");
+
+        let mut a = Command::new("sleep").arg("30").spawn().unwrap();
+        let identity = ProcessIdentity::capture(a.id()).unwrap();
+        let session = Session {
+            phase: Phase::Recording,
+            recorder: identity.clone(),
+            overlay: identity,
+        };
+
+        journal_processes(&state, &session).unwrap();
+        assert!(!state.exists(), "journal must not require a state file");
+        assert_eq!(read_journal(&state).unwrap().len(), 1);
+
+        // Recording the same session again must not duplicate entries.
+        journal_processes(&state, &session).unwrap();
+        assert_eq!(read_journal(&state).unwrap().len(), 1);
+
+        clear_journal(&state).unwrap();
+        assert!(read_journal(&state).unwrap().is_empty());
+
+        a.kill().unwrap();
+        a.wait().unwrap();
+    }
+
+    /// Reaping kills whatever is still journaled and leaves nothing behind, so
+    /// the next capture starts from a clean slate.
+    #[test]
+    fn reaping_terminates_journaled_processes() {
+        let directory = tempfile::tempdir().unwrap();
+        let state = directory.path().join("longshot.json");
+
+        let mut child = Command::new("sleep").arg("30").spawn().unwrap();
+        let identity = ProcessIdentity::capture(child.id()).unwrap();
+        let session = Session {
+            phase: Phase::Recording,
+            recorder: identity.clone(),
+            overlay: identity,
+        };
+        journal_processes(&state, &session).unwrap();
+
+        reap_orphans(&state, false);
+
+        // The process must actually be gone, not just forgotten. `wait` reaps
+        // the child; a SIGTERM'd sleep exits with a signal status.
+        use std::os::unix::process::ExitStatusExt;
+        let status = child.wait().unwrap();
+        assert!(
+            status.signal() == Some(libc::SIGTERM) || status.code().is_some(),
+            "child must have exited, got {status:?}"
+        );
+        assert!(read_journal(&state).unwrap().is_empty(), "journal cleared");
+    }
+
+    /// `stop` must always signal and reap the recorder, whatever the overlay
+    /// can or cannot be opened. A `?` on the overlay lookup used to return
+    /// before the recorder was ever asked to stop, leaving it writing to disk
+    /// forever with nothing tracking it.
+    #[test]
+    fn stop_always_stops_the_recorder() {
+        let mut recorder = Command::new("sleep").arg("30").spawn().unwrap();
+        let recorder_identity = ProcessIdentity::capture(recorder.id()).unwrap();
+
+        // An identity for a pid that cannot exist: opening it yields None.
+        let missing_overlay = ProcessIdentity::for_test(u32::MAX);
+
+        let mut session = Session {
+            phase: Phase::Recording,
+            recorder: recorder_identity,
+            overlay: missing_overlay,
+        };
+
+        session.stop().unwrap();
+
+        // The recorder must really be gone, not merely forgotten.
+        use std::os::unix::process::ExitStatusExt;
+        let status = recorder.wait().unwrap();
+        assert!(
+            status.signal() == Some(libc::SIGINT) || status.code().is_some(),
+            "recorder must have been stopped, got {status:?}"
+        );
+        assert_eq!(session.phase, Phase::Finalizing);
     }
 }

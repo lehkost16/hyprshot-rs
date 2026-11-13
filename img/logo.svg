@@ -1,8 +1,16 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-labelledby="title desc">
-  <title id="title">Hyshot</title>
-  <desc id="desc">Screenshot frame with an annotation stroke</desc>
-  <rect width="128" height="128" rx="28" fill="#20242d"/>
-  <path d="M42 35H35v18M86 35h7v18M93 75v18H75M53 93H35V75" fill="none" stroke="#53d4c4" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"/>
-  <path d="M45 80 57 68l11 11 25-26" fill="none" stroke="#f5a65b" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"/>
-  <circle cx="93" cy="53" r="5" fill="#f5a65b"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <title>Hyshot</title>
+  <defs>
+    <linearGradient id="bg3" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1D212A"/><stop offset="1" stop-color="#12151B"/>
+    </linearGradient>
+  </defs>
+  <rect width="1024" height="1024" rx="236" fill="url(#bg3)"/>
+  <g fill="none" stroke="#F5F6F8" stroke-width="70" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M256 396V256H396"/>
+    <path d="M768 396V256H628"/>
+    <path d="M256 628V768H396"/>
+    <path d="M768 628V768H628"/>
+  </g>
+  <circle cx="512" cy="512" r="84" fill="#49A8FF"/>
 </svg>

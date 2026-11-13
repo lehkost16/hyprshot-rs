@@ -6,7 +6,6 @@ authors = ["shiyuqi <shiyuqi@xiaoyingai.com>"]
 description = "Integrated Wayland screenshot, annotation, longshot, recording, OCR, and translation tool"
 license = "GPL-3.0"
 repository = "https://github.com/shikoucore/hyshot"
-homepage = "https://github.com/shikoucore/hyshot"
 keywords = ["hyprland", "screenshot", "wayland", "cli"]
 categories = ["command-line-utilities", "graphics"]
 readme = "README.md"
@@ -63,3 +62,7 @@ freeze = [
   "wayland-protocols-wlr",
   "memmap2",
 ]
+
+[patch.crates-io]
+xattr = { path = "patches/xattr-0.2.3" }
+gpui = { path = "patches/gpui-0.2.2" }

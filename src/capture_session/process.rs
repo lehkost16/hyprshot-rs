@@ -23,6 +23,22 @@ impl ProcessIdentity {
         })
     }
 
+    /// Builds an identity for a pid that cannot exist, for tests that need an
+    /// unopenable handle.
+    #[cfg(test)]
+    pub fn for_test(pid: u32) -> Self {
+        Self {
+            pid,
+            start_ticks: 0,
+            boot_id: String::from("test"),
+        }
+    }
+
+    /// The OS process id observed when this identity was captured.
+    pub fn pid(&self) -> u32 {
+        self.pid
+    }
+
     pub fn open(&self) -> Result<Option<ProcessHandle>> {
         ensure!(self.pid > 1, "Invalid capture process ID");
         if self.boot_id != fs::read_to_string("/proc/sys/kernel/random/boot_id")? {

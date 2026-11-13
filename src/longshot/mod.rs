@@ -18,6 +18,32 @@ mod decoder;
 pub mod overlay;
 pub mod stitcher;
 
+/// Renames an intermediate longshot recording to a visible, findable name.
+///
+/// Intermediate videos are hidden dotfiles (`.<output>.recording.mp4`) that only
+/// the state file referred to. After a failure the state file is gone, so the
+/// hidden name makes the file effectively lost. Falls back to the original path
+/// when the rename cannot be performed.
+fn salvage_failed_recording(video: &Path) -> std::path::PathBuf {
+    let Some(file_name) = video.file_name().and_then(|n| n.to_str()) else {
+        return video.to_path_buf();
+    };
+    let Some(stem) = file_name
+        .strip_prefix('.')
+        .and_then(|n| n.strip_suffix(".recording.mp4"))
+    else {
+        return video.to_path_buf();
+    };
+    // The stem is already `longshot_<stamp>`, so it only needs the failure
+    // marker instead of the whole prefix again.
+    let stamp = stem.strip_prefix("longshot_").unwrap_or(stem);
+    let target = video.with_file_name(format!("longshot_failed_{stamp}.mp4"));
+    match fs::rename(video, &target) {
+        Ok(()) => target,
+        Err(_) => video.to_path_buf(),
+    }
+}
+
 fn state_file_path() -> Result<std::path::PathBuf> {
     capture_session::state_path("longshot.json")
 }
@@ -38,6 +64,9 @@ pub fn handle_longshot(args: &Args, config: &config::Config) -> Result<()> {
 
     let state_file = state_file_path()?;
     let _lock = SessionLock::acquire(&state_file)?;
+    // Anything still journaled here belongs to a session whose state file is
+    // gone; it can no longer be stopped by pressing the hotkey.
+    capture_session::reap_orphans(&state_file, debug);
 
     // Check if a longshot recording is already active
     if state_file.exists() {
@@ -61,7 +90,13 @@ pub fn handle_longshot(args: &Args, config: &config::Config) -> Result<()> {
             eprintln!("Stopping longshot recording: {:?}", state);
         }
 
-        state.session.stop()?;
+        // A stop failure must not abort the flow: the processes were already
+        // signalled best-effort inside stop(), and returning here would leave
+        // the state file as the only record of a session nobody can finish.
+        // The stitching attempt below reports the real outcome to the user.
+        if let Err(error) = state.session.stop() {
+            eprintln!("Stopping the capture reported: {error:#}");
+        }
         state.session.phase = Phase::Finalizing;
         capture_session::write_state(&state_file, &state)?;
 
@@ -85,8 +120,10 @@ pub fn handle_longshot(args: &Args, config: &config::Config) -> Result<()> {
 
         match stitch_res {
             Ok(image) => {
-                if let Err(error) = copy_png(Path::new(&state.output_path)) {
-                    eprintln!("Longshot saved, but clipboard copy failed: {error:#}");
+                if config.longshot.after_save.eq_ignore_ascii_case("copy") {
+                    if let Err(error) = copy_png(Path::new(&state.output_path)) {
+                        eprintln!("Longshot saved, but clipboard copy failed: {error:#}");
+                    }
                 }
 
                 // Send success notification
@@ -110,6 +147,8 @@ pub fn handle_longshot(args: &Args, config: &config::Config) -> Result<()> {
                 if let Err(error) = fs::remove_file(&state.video_path) {
                     eprintln!("Cannot remove intermediate longshot recording: {error}");
                 }
+                // Session is fully over; nothing is left to reap.
+                let _ = capture_session::clear_journal(&state_file);
 
                 if debug {
                     eprintln!(
@@ -135,18 +174,25 @@ pub fn handle_longshot(args: &Args, config: &config::Config) -> Result<()> {
                 // Clearing it starts a fresh capture instead; the source video
                 // is kept so it can still be stitched by hand.
                 let _ = fs::remove_file(&state_file);
+                let _ = capture_session::clear_journal(&state_file);
+
+                // The intermediate recording is a dotfile with a timestamp for a
+                // name: once the session ends nothing points at it any more, so
+                // a retained video would be unfindable in the file manager. A
+                // failure renames it to a visible name so the user can actually
+                // recover the capture by hand.
+                let kept = salvage_failed_recording(Path::new(&state.video_path));
 
                 if !silent {
                     let _ = Notification::new()
                         .summary("Longshot 拼接失败")
-                        .body(&format!("{}\n源视频保留于: {}", err, state.video_path))
+                        .body(&format!("{}\n源视频保留于: {}", err, kept.display()))
                         .timeout(notif_timeout as i32)
                         .appname("Hyshot")
                         .show();
                 }
 
-                return Err(err)
-                    .context(format!("Source recording retained at {}", state.video_path));
+                return Err(err).context(format!("Source recording retained at {}", kept.display()));
             }
         }
 
@@ -224,6 +270,9 @@ pub fn handle_longshot(args: &Args, config: &config::Config) -> Result<()> {
             video_path,
             output_path: output_path.to_string_lossy().to_string(),
         };
+        // Journal the identities before committing: once the state file is the
+        // only owner, losing it would orphan two processes with no way back.
+        capture_session::journal_processes(&state_file, &state.session)?;
         capture.commit(&state_file, &state)?;
 
         // Send starting notification
@@ -275,8 +324,10 @@ pub fn handle_stitch(
 
     let image = stitcher::stitch_video(&input, &output_path, debug, config)?;
 
-    if let Err(error) = copy_png(&output_path) {
-        eprintln!("Longshot saved, but clipboard copy failed: {error:#}");
+    if config.longshot.after_save.eq_ignore_ascii_case("copy") {
+        if let Err(error) = copy_png(&output_path) {
+            eprintln!("Longshot saved, but clipboard copy failed: {error:#}");
+        }
     }
 
     if config.longshot.after_save.eq_ignore_ascii_case("edit") {
@@ -326,4 +377,40 @@ fn copy_png(path: &Path) -> Result<()> {
         .context("Cannot start clipboard copy")?;
     anyhow::ensure!(status.success(), "wl-copy exited with {status}");
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A failed session leaves no state file, so a hidden dotfile recording is
+    /// unreachable from a file manager. The salvage step must turn it into a
+    /// visible name that keeps the timestamp.
+    #[test]
+    fn failed_recording_is_renamed_to_a_visible_file() {
+        let directory = tempfile::tempdir().unwrap();
+        let hidden = directory
+            .path()
+            .join(".longshot_2026-10-29-120000-123.png.recording.mp4");
+        std::fs::write(&hidden, b"video bytes").unwrap();
+
+        let kept = salvage_failed_recording(&hidden);
+
+        assert!(!hidden.exists(), "hidden original must be gone");
+        assert!(kept.exists(), "renamed file must exist");
+        let name = kept.file_name().unwrap().to_str().unwrap();
+        assert_eq!(name, "longshot_failed_2026-10-29-120000-123.png.mp4");
+        assert!(!name.starts_with('.'), "must be visible in a file manager");
+    }
+
+    /// A path that is not a longshot intermediate is returned untouched rather
+    /// than renamed into something misleading.
+    #[test]
+    fn salvage_leaves_unrelated_paths_alone() {
+        let directory = tempfile::tempdir().unwrap();
+        let other = directory.path().join("holiday.mp4");
+        std::fs::write(&other, b"x").unwrap();
+        assert_eq!(salvage_failed_recording(&other), other);
+        assert!(other.exists());
+    }
 }

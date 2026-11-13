@@ -168,46 +168,34 @@ fn clean_ocr_text(input: &str) -> String {
             continue;
         }
 
-        // Remove [number] bracket info and percentages
-        let mut cleaned = String::new();
-        let mut chars = t.chars().peekable();
-        while let Some(ch) = chars.next() {
-            if ch == '[' {
-                while let Some(&next) = chars.peek() {
-                    if next == ']' {
-                        chars.next();
-                        break;
-                    }
-                    chars.next();
+        let mut s = t;
+
+        // Strip leading "[digits] " index prefix if present
+        if s.starts_with('[') {
+            if let Some(close_idx) = s.find(']') {
+                let inside = &s[1..close_idx];
+                if !inside.is_empty() && inside.chars().all(|c| c.is_ascii_digit()) {
+                    s = s[close_idx + 1..].trim_start();
                 }
-            } else if ch == '(' {
-                let mut temp = String::new();
-                let mut is_pct = false;
-                while let Some(&next) = chars.peek() {
-                    if next == ')' {
-                        chars.next();
-                        if temp.ends_with('%') {
-                            is_pct = true;
-                        }
-                        break;
-                    }
-                    temp.push(chars.next().unwrap());
-                }
-                if !is_pct {
-                    cleaned.push('(');
-                    cleaned.push_str(&temp);
-                    cleaned.push(')');
-                }
-            } else {
-                cleaned.push(ch);
             }
         }
 
-        lines.push(cleaned.trim().to_string());
+        // Strip trailing " (digits%)" confidence suffix if present
+        if s.ends_with("%)") {
+            if let Some(open_idx) = s.rfind('(') {
+                let inside = &s[open_idx + 1..s.len() - 2];
+                if !inside.is_empty() && inside.chars().all(|c| c.is_ascii_digit()) {
+                    s = s[..open_idx].trim_end();
+                }
+            }
+        }
+
+        if !s.is_empty() {
+            lines.push(s.to_string());
+        }
     }
 
-    let joined = lines.join(" ");
-    joined.trim().to_string()
+    lines.join("\n").trim().to_string()
 }
 
 #[cfg(test)]
@@ -220,6 +208,22 @@ mod tests {
             silent: true,
             notification_timeout: 1000,
         }
+    }
+
+    #[test]
+    fn clean_ocr_text_preserves_internal_brackets_and_newlines() {
+        let raw = "\
+CPU Group: [ 11 8 6 ], 416548
+The device supports: i8sdot:0
+[1] const list = [item1, item2]; (99%)
+[2] println!(\"result (test): {}\", list[0]); (100%)
+[3] 【通知】测试公告 (附录 A) (95%)
+";
+        let cleaned = clean_ocr_text(raw);
+        assert_eq!(
+            cleaned,
+            "const list = [item1, item2];\nprintln!(\"result (test): {}\", list[0]);\n【通知】测试公告 (附录 A)"
+        );
     }
 
     #[test]

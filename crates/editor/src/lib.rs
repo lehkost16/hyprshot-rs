@@ -1,29 +1,26 @@
-mod platform;
-mod ui;
+pub mod annotations;
+pub mod assets;
+pub mod clipboard;
+pub mod config;
+pub mod image_save;
+pub mod notify;
+pub mod renderer;
+pub mod ui;
 
-mod annotator;
-mod context;
-mod global;
-
-mod export;
-mod image_save;
-
-mod clipboard;
-mod config;
-mod egui_off_screen_render;
-mod notify;
-mod texture;
-
-use crate::platform::application::Application;
-use crate::platform::window::WindowConfiguration;
-use crate::ui::layout::{build_annotator, initial_window_size_for_image};
-use anyhow::{Context, Result};
-use hyshot_core::{ImageDocument, ImageSource, MAX_IMAGE_BYTES};
-use std::path::PathBuf;
-
+use annotations::ToolKind;
+use anyhow::Result;
+use assets::EditorAssets;
 pub use config::{EditorPreferences, EditorToolState, ToolSettings};
+use gpui::{
+    AppContext, Application, Bounds, WindowBackgroundAppearance, WindowBounds, WindowDecorations,
+    WindowKind, WindowOptions, px, size,
+};
+use hyshot_core::ImageDocument;
+use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
+use ui::editor_view::EditorView;
+use ui::layout::{dock_layout, fit_image_to_screen, secondary_toolbar_width_for_tool};
 
-/// Input pixels never need to be written to a temporary file.
 pub enum EditorInput {
     Files(Vec<PathBuf>),
     Document(ImageDocument),
@@ -37,24 +34,105 @@ pub struct EditorOptions {
     pub notification_timeout: u32,
 }
 
+pub fn run(input: EditorInput, options: EditorOptions) -> Result<EditorToolState> {
+    let mut documents = input.decode()?;
+    let Some(doc) = documents.pop() else {
+        return Ok(options.tool_state);
+    };
+
+    let raw_image = doc.pixels().clone();
+    let img_w = raw_image.width() as f32;
+    let img_h = raw_image.height() as f32;
+
+    let final_tool_state = Arc::new(Mutex::new(options.tool_state.clone()));
+    let result_state = final_tool_state.clone();
+
+    let app = Application::new().with_assets(EditorAssets);
+    app.run(move |cx| {
+        let output_dir = options.output_directory;
+        let preferences = options.preferences;
+        let tool_state = options.tool_state;
+        let notifications = options.notifications;
+        let timeout = options.notification_timeout;
+
+        let screen_size = cx.displays().first().map(|d| {
+            let b = d.bounds();
+            (f32::from(b.size.width), f32::from(b.size.height))
+        }).unwrap_or((1920.0, 1080.0));
+
+        let (fitted_w, fitted_h, fit_scale) = fit_image_to_screen(img_w, img_h, screen_size.0, screen_size.1);
+        let default_tool = ToolKind::from_config_value(&preferences.active_tool)
+            .unwrap_or(ToolKind::Rectangle);
+        let active_tool = if preferences.auto_activate_default_tool {
+            Some(default_tool)
+        } else {
+            None
+        };
+        let secondary_w = secondary_toolbar_width_for_tool(active_tool);
+        let dock = dock_layout(fitted_w, fitted_h, secondary_w, true);
+
+        let screen_bounds = Bounds::centered(
+            None,
+            size(px(dock.window_width), px(dock.window_height)),
+            cx,
+        );
+
+        let final_tool_state_ref = final_tool_state.clone();
+        let _ = cx.open_window(
+            WindowOptions {
+                window_bounds: Some(WindowBounds::Windowed(screen_bounds)),
+                window_min_size: Some(size(px(dock.window_width), px(dock.window_height))),
+                app_id: Some("site.nullable.annotator".into()),
+                window_background: WindowBackgroundAppearance::Transparent,
+                window_decorations: Some(WindowDecorations::Client),
+                kind: WindowKind::PopUp,
+                is_resizable: true,
+                focus: true,
+                ..Default::default()
+            },
+            |_, cx| {
+                cx.new(|cx| {
+                    EditorView::new(
+                        cx,
+                        raw_image.clone(),
+                        output_dir,
+                        preferences,
+                        tool_state,
+                        notifications,
+                        timeout,
+                        fit_scale,
+                        Some(final_tool_state_ref),
+                    )
+                })
+            },
+        );
+        cx.activate(true);
+    });
+
+    let state = result_state.lock().unwrap().clone();
+    Ok(state)
+}
+
+pub fn run_with_input(input: EditorInput, options: EditorOptions) -> Result<EditorToolState> {
+    run(input, options)
+}
+
 impl EditorInput {
-    fn decode(self) -> Result<Vec<ImageDocument>> {
+    pub fn decode(self) -> Result<Vec<ImageDocument>> {
         match self {
-            Self::Document(document) => Ok(vec![document]),
-            Self::Files(mut paths) => {
+            EditorInput::Document(document) => Ok(vec![document]),
+            EditorInput::Files(mut paths) => {
                 if paths.is_empty() {
-                    paths = rfd::FileDialog::new()
+                    if let Some(picked) = rfd::FileDialog::new()
                         .add_filter("Image", &["png", "jpg", "jpeg", "webp", "bmp", "gif"])
                         .pick_files()
-                        .unwrap_or_default();
+                    {
+                        paths = picked;
+                    }
                 }
-                let mut remaining = MAX_IMAGE_BYTES;
-                let mut documents = Vec::new();
+                let mut documents = Vec::with_capacity(paths.len());
                 for path in paths {
-                    let document = ImageDocument::from_file_with_budget(&path, remaining)
-                        .with_context(|| format!("Cannot load image {}", path.display()))?;
-                    remaining -= document.pixels().as_raw().len() as u64;
-                    documents.push(document);
+                    documents.push(ImageDocument::from_file(&path)?);
                 }
                 Ok(documents)
             }
@@ -62,106 +140,25 @@ impl EditorInput {
     }
 }
 
-pub fn run(input: EditorInput, options: EditorOptions) -> Result<EditorToolState> {
-    let images = input.decode()?;
-
-    if images.is_empty() {
-        return Ok(options.tool_state);
-    }
-
-    let session = config::EditorSession::new(config::EditorSettings::from_parts(
-        options.preferences,
-        options.tool_state,
-    ));
-    let mut app = Application::new(
-        "site.nullable.annotator",
-        true,
-        session.clone(),
-        options.output_directory,
-        options.notifications,
-        options.notification_timeout,
-    )?;
-
-    for document in images {
-        let image = document.pixels();
-        let pixel_size = document.pixel_size();
-        let (screen_w, screen_h) = app.screen_size();
-        let screen_scale = app.screen_scale_factor();
-        let window_size = initial_window_size_for_image(
-            image.width(),
-            image.height(),
-            screen_w,
-            screen_h,
-            screen_scale,
-        );
-
-        let window_config = WindowConfiguration {
-            app_id: app.app_id.to_owned(),
-            title: match document.source() {
-                ImageSource::Capture(_) => "Hyshot".to_owned(),
-                ImageSource::File(path) | ImageSource::Stitched(path) => {
-                    format!("Hyshot - {}", path.display())
-                }
-            },
-            size: window_size,
-            preferred_size: None,
-        };
-
-        app.open_window(
-            window_config,
-            Box::new(move |input, egui_ctx, app, window, current_view| {
-                build_annotator(
-                    input,
-                    egui_ctx,
-                    app,
-                    window,
-                    document.pixels().clone(),
-                    current_view,
-                )
-            }),
-        );
-        // Windows initialize the device, but image upload starts in the event loop.
-        let gpu = app.global_state.gpu.borrow();
-        let limits = gpu
-            .as_ref()
-            .context("GPU was not initialized")?
-            .device
-            .limits();
-        validate_texture_size(pixel_size, limits.max_texture_dimension_2d)?;
-        let readback_bytes =
-            (u64::from(pixel_size.0) * 4).div_ceil(256) * 256 * u64::from(pixel_size.1);
-        anyhow::ensure!(
-            readback_bytes <= limits.max_buffer_size,
-            "Image exceeds GPU export-buffer limit; original image is not resized"
-        );
-    }
-
-    app.run()?;
-    Ok(session.settings().tool_state())
-}
-
-fn validate_texture_size((width, height): (u32, u32), maximum: u32) -> Result<()> {
-    anyhow::ensure!(
-        width <= maximum && height <= maximum,
-        "Image {}x{} exceeds this GPU's {}-pixel texture limit; original image is not resized",
-        width,
-        height,
-        maximum
-    );
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use hyshot_core::ImageSource;
 
     #[test]
     fn memory_input_preserves_dimensions_and_rgba() {
         let source =
             image::RgbaImage::from_fn(7, 3, |x, y| image::Rgba([x as u8, y as u8, 200, 112]));
-        let bytes = crate::clipboard::to_png_bytes(&source).unwrap();
+        let mut png_bytes = Vec::new();
+        source
+            .write_to(
+                &mut std::io::Cursor::new(&mut png_bytes),
+                image::ImageFormat::Png,
+            )
+            .unwrap();
+
         let document = ImageDocument::from_png(
-            &bytes,
+            &png_bytes,
             ImageSource::Capture(hyshot_core::LogicalRect::new(-7, 3, 7, 3).unwrap()),
         )
         .unwrap();
@@ -173,7 +170,7 @@ mod tests {
     }
 
     #[test]
-    fn invalid_image_fails_before_wayland_initialization() {
+    fn invalid_image_fails_before_initialization() {
         assert!(
             ImageDocument::from_png(b"not a png", ImageSource::File("bad.png".into())).is_err()
         );
@@ -191,11 +188,5 @@ mod tests {
         source.save(&path).unwrap();
         let decoded = EditorInput::Files(vec![path]).decode().unwrap();
         assert_eq!(decoded[0].pixels().as_ref(), &source);
-    }
-
-    #[test]
-    fn oversized_texture_is_rejected_without_resizing() {
-        assert!(validate_texture_size((1920, 16384), 16384).is_ok());
-        assert!(validate_texture_size((1920, 16385), 16384).is_err());
     }
 }

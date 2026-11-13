@@ -22,10 +22,7 @@ impl MonitorInfo {
     }
 }
 
-pub(crate) fn get_monitor_info_for_geometry(
-    geometry: &Geometry,
-    debug: bool,
-) -> Result<MonitorInfo> {
+pub(crate) fn query_all_monitors() -> Result<Vec<MonitorInfo>> {
     let (mut command, parse): (_, fn(&Value) -> Option<MonitorInfo>) =
         if std::env::var_os("HYPRLAND_INSTANCE_SIGNATURE").is_some() {
             let mut command = Command::new("hyprctl");
@@ -47,24 +44,39 @@ pub(crate) fn get_monitor_info_for_geometry(
     );
     let values: Vec<Value> =
         serde_json::from_slice(&output.stdout).context("Invalid monitor metadata")?;
-    let monitor = find_monitor_for_geometry(&values, geometry, parse)
+    Ok(values.iter().filter_map(parse).collect())
+}
+
+pub(crate) fn find_best_monitor_for_geometry<'a>(
+    monitors: &'a [MonitorInfo],
+    geometry: &Geometry,
+) -> Option<&'a MonitorInfo> {
+    // 1. If geometry is fully contained inside a monitor, that's the best match.
+    if let Some(m) = monitors.iter().find(|m| m.geometry().is_ok_and(|b| b.contains(geometry))) {
+        return Some(m);
+    }
+    // 2. Otherwise pick the monitor containing the center point of the geometry.
+    let center_x = geometry.x + geometry.width as i32 / 2;
+    let center_y = geometry.y + geometry.height as i32 / 2;
+    monitors.iter().find(|m| {
+        m.x <= center_x && center_x < m.x + m.width && m.y <= center_y && center_y < m.y + m.height
+    })
+}
+
+pub(crate) fn get_monitor_info_for_geometry(
+    geometry: &Geometry,
+    debug: bool,
+) -> Result<MonitorInfo> {
+    let monitors = query_all_monitors()?;
+    let monitor = monitors
+        .iter()
+        .find(|m| m.geometry().is_ok_and(|b| b.contains(geometry)))
+        .cloned()
         .context("Selected region must fit entirely within one enabled output; cross-output recording is not supported")?;
     if debug {
         eprintln!("Selected output: {monitor:?}");
     }
     Ok(monitor)
-}
-
-fn find_monitor_for_geometry(
-    outputs: &[Value],
-    geometry: &Geometry,
-    parse: fn(&Value) -> Option<MonitorInfo>,
-) -> Option<MonitorInfo> {
-    outputs.iter().filter_map(parse).find(|monitor| {
-        monitor
-            .geometry()
-            .is_ok_and(|bounds| bounds.contains(geometry))
-    })
 }
 
 pub(crate) fn monitor_info_from_hypr(value: &Value) -> Option<MonitorInfo> {
@@ -138,8 +150,8 @@ mod tests {
     #[test]
     fn scaled_primary_does_not_shadow_adjacent_output() {
         let selected = Geometry::new(1400, 100, 300, 200).unwrap();
-        let monitor =
-            find_monitor_for_geometry(&monitors(), &selected, monitor_info_from_hypr).unwrap();
+        let mon_list: Vec<MonitorInfo> = monitors().iter().filter_map(monitor_info_from_hypr).collect();
+        let monitor = find_best_monitor_for_geometry(&mon_list, &selected).unwrap();
         assert_eq!(monitor.name, "HDMI-A-1");
         assert_eq!(monitor_info_from_hypr(&monitors()[0]).unwrap().width, 1280);
     }
@@ -156,13 +168,10 @@ mod tests {
 
     #[test]
     fn cross_output_and_invalid_scale_are_rejected() {
+        let mon_list: Vec<MonitorInfo> = monitors().iter().filter_map(monitor_info_from_hypr).collect();
+        let cross = Geometry::new(1200, 0, 200, 100).unwrap();
         assert!(
-            find_monitor_for_geometry(
-                &monitors(),
-                &Geometry::new(1200, 0, 200, 100).unwrap(),
-                monitor_info_from_hypr
-            )
-            .is_none()
+            !mon_list.iter().any(|m| m.geometry().is_ok_and(|b| b.contains(&cross)))
         );
         let mut monitor = monitors().remove(0);
         monitor["scale"] = json!(0);

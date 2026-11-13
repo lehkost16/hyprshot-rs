@@ -392,6 +392,11 @@ fn capture_region_with_grim_options(
         geometry.x, geometry.y, geometry.width, geometry.height
     );
     let mut cmd = Command::new("grim");
+    if let Ok(monitors) = crate::compositor::query_all_monitors()
+        && let Some(monitor) = crate::compositor::find_best_monitor_for_geometry(&monitors, geometry)
+    {
+        cmd.arg("-s").arg(monitor.scale.to_string());
+    }
     cmd.arg("-g").arg(&geom_str);
     let file_type = file_type.trim().to_lowercase();
     cmd.arg("-t").arg(&file_type);

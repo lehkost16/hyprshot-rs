@@ -36,6 +36,9 @@ pub fn handle_record(args: &Args, config: &config::Config) -> Result<()> {
 
     let state_file = state_file_path()?;
     let _lock = SessionLock::acquire(&state_file)?;
+    // Anything still journaled here belongs to a session whose state file is
+    // gone; it can no longer be stopped by pressing the hotkey.
+    crate::capture_session::reap_orphans(&state_file, debug);
 
     // Check if recording is already active
     if state_file.exists() {
@@ -59,7 +62,12 @@ pub fn handle_record(args: &Args, config: &config::Config) -> Result<()> {
             eprintln!("Stopping recording: {:?}", state);
         }
 
-        state.session.stop()?;
+        // A stop failure must not abort the flow: the processes were already
+        // signalled best-effort inside stop(), and returning here would leave
+        // the state file as the only record of a session nobody can finish.
+        if let Err(error) = state.session.stop() {
+            eprintln!("Stopping the recording reported: {error:#}");
+        }
         state.session.phase = Phase::Finalizing;
         capture_session::write_state(&state_file, &state)?;
         if let Err(error) = finalize_recording(&state) {
@@ -67,6 +75,7 @@ pub fn handle_record(args: &Args, config: &config::Config) -> Result<()> {
             // file again would fail identically. The raw recording is kept so
             // it can still be recovered by hand.
             let _ = fs::remove_file(&state_file);
+            let _ = crate::capture_session::clear_journal(&state_file);
             if !silent {
                 let _ = Notification::new()
                     .summary("录屏保存失败")
@@ -81,21 +90,22 @@ pub fn handle_record(args: &Args, config: &config::Config) -> Result<()> {
             ));
         }
         fs::remove_file(&state_file).context("Cannot remove completed recording state")?;
+        // Session is fully over; nothing is left to reap.
+        let _ = crate::capture_session::clear_journal(&state_file);
         let final_path = &state.video_path;
-        let copied = copy_path(final_path);
-        if config.record.after_save.eq_ignore_ascii_case("open") {
+        let mut copied = None;
+        if config.record.after_save.eq_ignore_ascii_case("copy") {
+            copied = Some(copy_path(final_path));
+        } else if config.record.after_save.eq_ignore_ascii_case("open") {
             crate::save::open_path(Path::new(final_path));
         }
         if !silent {
-            let body = format!(
-                "视频已保存至: {}{}",
-                final_path,
-                if copied {
-                    "\n路径已复制到剪贴板"
-                } else {
-                    "\n剪贴板复制失败"
-                }
-            );
+            let copy_suffix = match copied {
+                Some(true) => "\n路径已复制到剪贴板",
+                Some(false) => "\n剪贴板复制失败",
+                None => "",
+            };
+            let body = format!("视频已保存至: {}{}", final_path, copy_suffix);
             crate::save::spawn_notification_with_actions(
                 if state.temp_video_path.is_some() {
                     "GIF已生成".to_string()
@@ -203,6 +213,9 @@ pub fn handle_record(args: &Args, config: &config::Config) -> Result<()> {
             recording_path: record_path_str.clone(),
             temp_video_path: if is_gif { Some(record_path_str) } else { None },
         };
+        // Journal the identities before committing: once the state file is the
+        // only owner, losing it would orphan two processes with no way back.
+        crate::capture_session::journal_processes(&state_file, &state.session)?;
         capture.commit(&state_file, &state)?;
 
         // Send starting notification

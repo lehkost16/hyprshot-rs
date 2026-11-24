@@ -55,6 +55,14 @@ struct LongshotState {
     output_path: String,
 }
 
+pub fn effective_fps(config: &crate::config::Config) -> u32 {
+    if config.longshot.fps == 12 || config.longshot.fps < 24 {
+        24
+    } else {
+        config.longshot.fps
+    }
+}
+
 pub fn handle_longshot(args: &Args, config: &config::Config) -> Result<()> {
     let debug = args.debug;
     let silent = args.silent || !config.capture.notification;
@@ -234,12 +242,12 @@ pub fn handle_longshot(args: &Args, config: &config::Config) -> Result<()> {
             );
         }
 
-        // Spawn wl-screenrec with --no-cursor
+        // Spawn wl-screenrec with --no-cursor and high bitrate to keep text crisp
         let geom_str = format!(
             "{},{} {}x{}",
             geometry.x, geometry.y, geometry.width, geometry.height
         );
-        let max_fps_arg = config.longshot.fps.to_string();
+        let max_fps_arg = effective_fps(config).to_string();
 
         let mut rec_cmd = Command::new("wl-screenrec");
         rec_cmd
@@ -249,7 +257,9 @@ pub fn handle_longshot(args: &Args, config: &config::Config) -> Result<()> {
             .arg(&video_path)
             .arg("--no-cursor")
             .arg("--max-fps")
-            .arg(&max_fps_arg);
+            .arg(&max_fps_arg)
+            .arg("--bitrate")
+            .arg("30MB");
 
         if config.record.hwaccel == "none" {
             rec_cmd.arg("--no-hw");

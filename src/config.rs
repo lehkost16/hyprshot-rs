@@ -161,7 +161,7 @@ fn default_save_file() -> bool {
 }
 
 fn default_longshot_fps() -> u32 {
-    12
+    24
 }
 
 fn default_longshot_sad_threshold() -> f32 {

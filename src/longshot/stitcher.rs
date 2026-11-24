@@ -621,7 +621,8 @@ pub fn stitch_to_image(
     config: &crate::config::Config,
 ) -> Result<image::RgbImage> {
     let (width, height) = get_video_dimensions(video)?;
-    let mut reader = FrameReader::open(video, width, height, config.longshot.fps)?;
+    let fps = crate::longshot::effective_fps(config);
+    let mut reader = FrameReader::open(video, width, height, fps)?;
     let mut samples = BorderSamples::new();
     while let Some(rgb) = reader.next_frame()? {
         samples.push(grayscale(&rgb));
@@ -632,7 +633,7 @@ pub fn stitch_to_image(
     drop(reader);
 
     let mut stitcher = Stitcher::new(width, height, borders, config, debug)?;
-    let mut reader = FrameReader::open(video, width, height, config.longshot.fps)?;
+    let mut reader = FrameReader::open(video, width, height, fps)?;
     while let Some(rgb) = reader.next_frame()? {
         let outcome = stitcher.push_frame(rgb)?;
         if debug && outcome == StitchUpdate::NoMatch {

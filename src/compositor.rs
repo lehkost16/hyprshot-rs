@@ -1,5 +1,5 @@
 //! Compositor metadata is converted to logical geometry at this boundary.
-use anyhow::{Context, Result, ensure};
+use anyhow::{Context, Result};
 use serde_json::Value;
 use std::process::Command;
 use std::time::Duration;
@@ -23,28 +23,46 @@ impl MonitorInfo {
 }
 
 pub(crate) fn query_all_monitors() -> Result<Vec<MonitorInfo>> {
-    let (mut command, parse): (_, fn(&Value) -> Option<MonitorInfo>) =
-        if std::env::var_os("HYPRLAND_INSTANCE_SIGNATURE").is_some() {
-            let mut command = Command::new("hyprctl");
-            command.args(["monitors", "-j"]);
-            (command, monitor_info_from_hypr)
-        } else if std::env::var_os("SWAYSOCK").is_some() {
-            let mut command = Command::new("swaymsg");
-            command.args(["-t", "get_outputs", "-r"]);
-            (command, monitor_info_from_sway)
-        } else {
-            anyhow::bail!("Cannot identify compositor; no output will be guessed for recording");
-        };
-    command.stdin(std::process::Stdio::null());
-    let output = crate::utils::output_with_timeout(command, Duration::from_secs(3))?;
-    ensure!(
-        output.status.success(),
-        "Monitor query failed: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let values: Vec<Value> =
-        serde_json::from_slice(&output.stdout).context("Invalid monitor metadata")?;
-    Ok(values.iter().filter_map(parse).collect())
+    if std::env::var_os("HYPRLAND_INSTANCE_SIGNATURE").is_some() {
+        let mut command = Command::new("hyprctl");
+        command.args(["monitors", "-j"]);
+        command.stdin(std::process::Stdio::null());
+        if let Ok(output) = crate::utils::output_with_timeout(command, Duration::from_secs(3)) {
+            if output.status.success() {
+                if let Ok(values) = serde_json::from_slice::<Vec<Value>>(&output.stdout) {
+                    let list: Vec<MonitorInfo> = values.iter().filter_map(monitor_info_from_hypr).collect();
+                    if !list.is_empty() {
+                        return Ok(list);
+                    }
+                }
+            }
+        }
+    } else if std::env::var_os("SWAYSOCK").is_some() {
+        let mut command = Command::new("swaymsg");
+        command.args(["-t", "get_outputs", "-r"]);
+        command.stdin(std::process::Stdio::null());
+        if let Ok(output) = crate::utils::output_with_timeout(command, Duration::from_secs(3)) {
+            if output.status.success() {
+                if let Ok(values) = serde_json::from_slice::<Vec<Value>>(&output.stdout) {
+                    let list: Vec<MonitorInfo> = values.iter().filter_map(monitor_info_from_sway).collect();
+                    if !list.is_empty() {
+                        return Ok(list);
+                    }
+                }
+            }
+        }
+    }
+
+    #[cfg(feature = "freeze")]
+    {
+        if let Ok(monitors) = crate::utils::wayland_query_monitors() {
+            if !monitors.is_empty() {
+                return Ok(monitors);
+            }
+        }
+    }
+
+    anyhow::bail!("Cannot identify compositor monitors; no enabled output could be resolved for recording");
 }
 
 pub(crate) fn find_best_monitor_for_geometry<'a>(
@@ -68,9 +86,8 @@ pub(crate) fn get_monitor_info_for_geometry(
     debug: bool,
 ) -> Result<MonitorInfo> {
     let monitors = query_all_monitors()?;
-    let monitor = monitors
-        .iter()
-        .find(|m| m.geometry().is_ok_and(|b| b.contains(geometry)))
+    let monitor = find_best_monitor_for_geometry(&monitors, geometry)
+        .or_else(|| if monitors.len() == 1 { monitors.first() } else { None })
         .cloned()
         .context("Selected region must fit entirely within one enabled output; cross-output recording is not supported")?;
     if debug {

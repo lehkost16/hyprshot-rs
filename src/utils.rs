@@ -96,7 +96,7 @@ pub fn trim(geometry: &Geometry, debug: bool) -> Result<Geometry> {
 }
 
 #[cfg(feature = "freeze")]
-fn wayland_monitor_bounds(x: i32, y: i32) -> Result<Option<(i32, i32, i32, i32)>> {
+pub(crate) fn wayland_query_monitors() -> Result<Vec<crate::compositor::MonitorInfo>> {
     let conn = Connection::connect_to_env().context("Failed to connect to Wayland")?;
     let mut event_queue = conn.new_event_queue();
     let qh = event_queue.handle();
@@ -108,6 +108,7 @@ fn wayland_monitor_bounds(x: i32, y: i32) -> Result<Option<(i32, i32, i32, i32)>
 
     struct OutputEntry {
         output: WlOutput,
+        name: Option<String>,
         xdg_output: Option<ZxdgOutputV1>,
         pos_x: Option<i32>,
         pos_y: Option<i32>,
@@ -151,6 +152,7 @@ fn wayland_monitor_bounds(x: i32, y: i32) -> Result<Option<(i32, i32, i32, i32)>
                         );
                         state.outputs.push(OutputEntry {
                             output,
+                            name: None,
                             xdg_output: None,
                             pos_x: None,
                             pos_y: None,
@@ -186,6 +188,9 @@ fn wayland_monitor_bounds(x: i32, y: i32) -> Result<Option<(i32, i32, i32, i32)>
                 return;
             };
             match event {
+                wayland_client::protocol::wl_output::Event::Name { name } => {
+                    entry.name = Some(name);
+                }
                 wayland_client::protocol::wl_output::Event::Geometry { x, y, .. } => {
                     entry.pos_x = Some(x);
                     entry.pos_y = Some(y);
@@ -226,6 +231,9 @@ fn wayland_monitor_bounds(x: i32, y: i32) -> Result<Option<(i32, i32, i32, i32)>
                 return;
             };
             match event {
+                wayland_protocols::xdg::xdg_output::zv1::client::zxdg_output_v1::Event::Name { name } => {
+                    entry.name = Some(name);
+                }
                 wayland_protocols::xdg::xdg_output::zv1::client::zxdg_output_v1::Event::LogicalPosition { x, y } => {
                     entry.logical_x = Some(x);
                     entry.logical_y = Some(y);
@@ -283,7 +291,8 @@ fn wayland_monitor_bounds(x: i32, y: i32) -> Result<Option<(i32, i32, i32, i32)>
         ))
     }
 
-    for output in &state.outputs {
+    let mut monitors = Vec::new();
+    for (idx, output) in state.outputs.iter().enumerate() {
         let (ox, oy) = match (
             output.logical_x.or(output.pos_x),
             output.logical_y.or(output.pos_y),
@@ -295,11 +304,32 @@ fn wayland_monitor_bounds(x: i32, y: i32) -> Result<Option<(i32, i32, i32, i32)>
             Some(v) => v,
             None => continue,
         };
-        if x >= ox && x < ox + ow && y >= oy && y < oy + oh {
-            return Ok(Some((ox, oy, ow, oh)));
+        let name = output.name.clone().unwrap_or_else(|| format!("output-{}", idx));
+        let scale = output.scale.max(1) as f64;
+        let mon = crate::compositor::MonitorInfo {
+            name,
+            scale,
+            x: ox,
+            y: oy,
+            width: ow,
+            height: oh,
+        };
+        if mon.geometry().is_ok() {
+            monitors.push(mon);
         }
     }
 
+    Ok(monitors)
+}
+
+#[cfg(feature = "freeze")]
+fn wayland_monitor_bounds(x: i32, y: i32) -> Result<Option<(i32, i32, i32, i32)>> {
+    let monitors = wayland_query_monitors()?;
+    for m in monitors {
+        if x >= m.x && x < m.x + m.width && y >= m.y && y < m.y + m.height {
+            return Ok(Some((m.x, m.y, m.width, m.height)));
+        }
+    }
     Ok(None)
 }
 

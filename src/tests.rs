@@ -210,7 +210,7 @@ fn test_default_config() {
     assert!(config.advanced.freeze_on_area);
     assert!(!config.advanced.freeze_on_annotate);
     assert_eq!(config.advanced.delay_ms, 0);
-    assert_eq!(config.longshot.fps, 12);
+    assert_eq!(config.longshot.fps, 24);
     assert_eq!(config.record.quality, "balanced");
     assert!(!config.record.audio);
 }

@@ -349,7 +349,7 @@ pub fn wait_with_timeout(child: &mut Child, timeout: Duration) -> Result<ExitSta
     }
 }
 
-// Run a short-lived command with a timeout and capture Output; used for hyprctl/swaymsg.
+// Run a short-lived command with a timeout and capture Output; used for hyprctl.
 pub fn output_with_timeout(mut cmd: Command, timeout: Duration) -> Result<Output> {
     cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
     let mut child = cmd.spawn().context("Failed to spawn command")?;
